@@ -1,0 +1,22 @@
+# Cache
+.idea/
+.vscode/
+__pycache__
+*log.txt
+
+# Expansion GRR
+expansion_grr/
+
+# Model
+*.pt
+*.pth
+
+# Data & Results
+results/
+*.pkl
+*.npy
+
+# Test
+test/
+*pool.sh
+*pool.py

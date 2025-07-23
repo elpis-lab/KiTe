@@ -1,0 +1,24 @@
+<mujoco model="letter_t">
+  <compiler angle="radian" />
+
+  <asset>
+    <mesh name="letter_t_visual_mesh" file="letter_t/textured.obj" />
+    <!-- <mesh name="letter_t_collision_mesh" file="letter_t/textured_vhacd.stl" /> -->
+    <mesh name="letter_t_collision_mesh_0" file="letter_t/textured_coacd_0.stl" />
+    <mesh name="letter_t_collision_mesh_1" file="letter_t/textured_coacd_1.stl" />
+  </asset>
+
+  <worldbody>
+    <body name="letter_t" pos="0 0 0" euler="0 0 0">
+      <freejoint name="letter_t_joint" />
+      
+      <geom name="letter_t_visual_geom" type="mesh" mesh="letter_t_visual_mesh" pos="0.0 -0.00016586781843713064 0.0" euler="0 0 0" contype="0" conaffinity="0" group="0" />
+      
+      <!-- <geom name="letter_t_collision_geom" type="mesh" mesh="letter_t_collision_mesh" pos="0.0 -0.00016586781843713064 0.0" euler="0 0 0" contype="1" conaffinity="1" group="3" /> -->
+      <geom name="letter_t_collision_geom_0" type="mesh" mesh="letter_t_collision_mesh_0" pos="0.0 -0.00016586781843713064 0.0" euler="0 0 0" contype="1" conaffinity="1" group="3" />
+      <geom name="letter_t_collision_geom_1" type="mesh" mesh="letter_t_collision_mesh_1" pos="0.0 -0.00016586781843713064 0.0" euler="0 0 0" contype="1" conaffinity="1" group="3" />
+
+      <inertial pos="0 0 0" euler="0 0 0" mass="0.1" diaginertia="0.001 0.001 0.001" />
+    </body>
+  </worldbody>
+</mujoco>

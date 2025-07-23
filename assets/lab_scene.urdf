@@ -1,0 +1,23 @@
+<robot name="lab_scene">
+	<link name="base_link">
+		<visual>
+			<origin xyz="0.0 -0.508 -0.7" rpy="0.0 0.0 1.570796" />
+			<geometry>
+				<mesh filename="lab_scene/lab_scene.obj" scale="1 1 1" />
+			</geometry>
+			<material name="texture">
+				<color rgba="1.0 1.0 1.0 1.0" />
+			</material>
+		</visual>
+		<collision>
+			<origin xyz="0.0 -0.508 -0.7" rpy="0.0 0.0 1.570796" />
+			<geometry>
+				<mesh filename="lab_scene/lab_scene_box.stl" scale="1 1 1" />
+			</geometry>
+		</collision>
+		<inertial>
+			<mass value="10.0" />
+			<inertia ixx="1e-3" ixy="0.0" ixz="0.0" iyy="1e-3" iyz="0.0" izz="1e-3" />
+		</inertial>
+	</link>
+</robot>

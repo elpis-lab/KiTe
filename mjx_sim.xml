@@ -1,0 +1,21 @@
+<mujoco model="mjc_sim">
+  <compiler angle="radian" autolimits="true" />
+  <option integrator="implicitfast" />
+
+  <visual>
+    <global offwidth="1920" offheight="1080" />
+  </visual>
+
+  <default>
+    <geom condim="4" friction="0.2 0.02 0.0001" />
+  </default>
+
+  <include file="assets/lab_scene.xml" />
+  <include file="assets/ur10_rod.xml" />
+  <include file="assets/cracker_box_flipped.xml" />
+  <!-- <include file="assets/mustard_bottle_flipped.xml" /> -->
+  <!-- <include file="assets/banana.xml" /> -->
+  <!-- <include file="assets/master_chef_can_flipped.xml" /> -->
+  <!-- <include file="assets/vehicle.xml" /> -->
+  <!-- <include file="assets/letter_t.xml" /> -->
+</mujoco>

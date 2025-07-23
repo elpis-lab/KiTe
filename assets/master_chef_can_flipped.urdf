@@ -1,0 +1,23 @@
+<robot name="master_chef_can_flipped">
+    <link name="base_link">
+        <visual>
+            <origin xyz="0.005167437849898521 -0.07058421123879596 -0.01897421546193206" rpy="0.0 0.0 0.0" />
+            <geometry>
+                <mesh filename="master_chef_can_flipped/textured.obj" scale="1 1 1" />
+            </geometry>
+            <material name="texture">
+                <color rgba="1.0 1.0 1.0 1.0" />
+            </material>
+        </visual>
+        <collision>
+            <origin xyz="0.005167437849898521 -0.07058421123879596 -0.01897421546193206" rpy="0.0 0.0 0.0" />
+            <geometry>
+                <mesh filename="master_chef_can_flipped/textured_vhacd.stl" scale="1 1 1" />
+            </geometry>
+        </collision>
+        <inertial>
+            <mass value="1.0" />
+            <inertia ixx="1e-3" ixy="0.0" ixz="0.0" iyy="1e-3" iyz="0.0" izz="1e-3" />
+        </inertial>
+    </link>
+</robot>
