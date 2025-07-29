@@ -215,9 +215,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "obj_name", nargs="?", default="master_chef_can_flipped"
-    )
+    parser.add_argument("obj_name", nargs="?", default="cracker_box_flipped")
     args = parser.parse_args()
     seed = 42
     np.random.seed(seed)
