@@ -1,141 +1,184 @@
 import numpy as np
-from geometry.pose import Pose, matrix_to_quat
+
+from geometry.pose import matrix_to_quat, flat_to_matrix
+from geometry.pose import euler_to_quat, quat_to_matrix
 
 
 def get_random_push(
-    obj_pose: Pose,
+    n_params: int,
+    obj_states: np.ndarray,
     obj_shape: tuple[float, float, float],
-    tool_offset: Pose = Pose(),
-    rotation_range: tuple[float, float] = (0, 4),  # rotation to push from
+    tool_offset: np.ndarray,
+    rotation_range: tuple[float, float] = (0, 2 * np.pi),  # ang to push from
     side_range: tuple[float, float] = (-0.4, 0.4),  # relative side offset
     distance_range: tuple[float, float] = (0, 0.3),  # push distance
-    total_time: float = 3,  # total time to complete the push
+    pre_push_offset: float = 0.02,  # pre-push offset at the beginning
+    duration: float = 3,  # total time to complete the push
     dt: float = 0.1,  # time step of the path
     max_speed: float = 0.5,  # assume it will never exceed this speed
     max_acc: float = 1,  # assume it will never exceed this acceleration
 ):
     """Get a random push parameter and the corresponding path"""
     push_params = generate_push_params(
-        obj_shape,
+        n_params=n_params,
         rotation_range=rotation_range,
         side_range=side_range,
         distance_range=distance_range,
     )
-
-    times, ws_path = generate_path_form_params(
-        obj_pose,
+    times, ws_paths = generate_path_form_params(
+        obj_states,
         obj_shape,
         push_params,
         tool_offset=tool_offset,
-        total_time=total_time,
+        pre_push_offset=pre_push_offset,
+        duration=duration,
         dt=dt,
         max_speed=max_speed,
         max_acc=max_acc,
     )
-
-    return push_params, times, ws_path
+    return push_params, times, ws_paths
 
 
 def generate_push_params(
-    obj_shape: tuple[float, float, float],
-    rotation_range: tuple[float, float] = (0, 4),  # rotation to push from
-    side_range: tuple[float, float] = (-0.4, 0.4),  # relative side offset
-    distance_range: tuple[float, float] = (0, 0.3),  # push distance
+    n_params: int,
+    # Angle to push from (will be discretized to pi / 2)
+    rotation_range: tuple[float, float] = (0, 2 * np.pi),
+    # Relative push side offset
+    side_range: tuple[float, float] = (-0.4, 0.4),
+    # Push distance
+    distance_range: tuple[float, float] = (0, 0.3),
 ):
     """Generate a random push parameter"""
-    edge = np.random.randint(*rotation_range)
-    rotation = edge * np.pi / 2
+    # Push rotation
+    # (discrete over pi / 2, normalized by 2 * pi) -> (0, 0.25, 0.5, 0.75...)
+    rotations = np.random.uniform(*rotation_range, n_params)
+    rotations = (rotations / (np.pi / 2)).astype(int) / 4
+    # Push side offset (relative value w.r.t. the object size)
+    sides = np.random.uniform(*side_range, n_params)
+    # Push distance (absolute value)
+    distances = np.random.uniform(*distance_range, n_params)
 
-    w, l, h = obj_shape
-    if edge % 2 == 1:
-        side_size = w
-    else:
-        side_size = l
-    side = np.random.uniform(*side_range) * side_size
-
-    distance = np.random.uniform(*distance_range)
-
-    push_params = (rotation, side, distance)
+    # Stack all parameters (n_params, 3)
+    push_params = np.stack([rotations, sides, distances], axis=-1)
     return push_params
 
 
 def generate_path_form_params(
-    obj_pose: Pose,
+    obj_states: np.ndarray,
     obj_shape: tuple[float, float, float],
-    push_params: tuple[float, float, float],
-    tool_offset: Pose = Pose(),
-    total_time: float = 3,
+    push_params: np.ndarray,
+    tool_offset: np.ndarray,
+    pre_push_offset: float = 0.02,
+    duration: float = 3,
     dt: float = 0.1,
     max_speed: float = 0.5,
     max_acc: float = 1,
-    relative_push_offset: bool = False,
 ):
     """Generate a workspace path from the push parameters"""
-    rotation, side, distance = push_params
-    # make sure rotation is multiples of pi / 2
-    push_side = np.round(rotation / (np.pi / 2))
-    rotation = push_side * (np.pi / 2)
+    # Unpack parameters
+    assert push_params.ndim == 2 and push_params.shape[1] == 3
+    assert obj_states.shape[0] == push_params.shape[0]
+    n_data = push_params.shape[0]
+    rotations, sides, distances = push_params.T
 
-    # The object is approximated as an AABB
+    # Convert the normalized rotation to the absolute value
+    push_sides = np.round(rotations * 4)
+    rotations = push_sides * (np.pi / 2)
+    # Covert the relative side offset to the absolute value
+    # the object is approximated as an AABB
     w, l, h = obj_shape
-    if push_side % 2 == 1:
-        size = l
-        side = w * side if relative_push_offset else side
-    else:
-        size = w
-        side = l * side if relative_push_offset else side
+    mask_odd = push_sides % 2 == 1
+    sizes = np.where(mask_odd, l, w)
+    sides = np.where(mask_odd, w * sides, l * sides)
 
     # Get local path (x, y) w.r.t. the object
-    # direction vectors
-    dir_vec = np.array([np.cos(rotation), np.sin(rotation)])
-    side_offset_vec = np.array([-dir_vec[1], dir_vec[0]])
-    # small offset to avoid hitting object at the beginning
-    pre_push_offset = 0.04
-    # start point
-    start = (dir_vec * (size / 2 + pre_push_offset)) + (side * side_offset_vec)
-    distance += pre_push_offset
-
-    # TODO - Move all these stuff to physics.py
-    # Check constraints before generating path
-    peak_speed = 2 * distance / total_time
-    peak_speed = np.clip(peak_speed, 0, max_speed)
-    peak_acc = peak_speed * np.pi / total_time
-    peak_acc = np.clip(peak_acc, 0, max_acc)
-    # Generate path
-    # Sin velocity to complete this path from start to end
-    # v(t) = -peak_speed / 2 * (cos(2 * pi * t / T) - 1)
-    # d(t) = peak_speed * t / 2
-    #      - peak_speed * total_time / (4 * pi) * sin(2 * pi * t / T)
-    times = np.linspace(0, total_time, int(total_time / dt))
-    scale = -peak_speed * total_time / 4 / np.pi
-    dists = scale * np.sin(2 * np.pi * times / total_time) + (
-        peak_speed * times / 2
+    # direction vectors (N, 2)
+    dir_vecs = np.stack([np.cos(rotations), np.sin(rotations)], axis=1)
+    # side offset vectors (N, 2)
+    side_vecs = np.stack([-dir_vecs[:, 1], dir_vecs[:, 0]], axis=1)
+    # add pre-push offset to avoid hitting object at the beginning
+    distances = distances + pre_push_offset  # (N, 1)
+    # start point (N, 2)
+    starts = (
+        dir_vecs * (sizes / 2 + pre_push_offset)[:, None]
+        + sides[:, None] * side_vecs
     )
 
-    # Generate path in local frame
-    # local = start - dist * dir_vec
-    local_xy = start[None, :] - np.outer(dists, dir_vec)
-    local_z = -h / 2 * np.ones((len(times),))  # assume making z to be 0
-    local_pos = np.stack([local_xy[:, 0], local_xy[:, 1], local_z], axis=1)
+    # Check constraints before generating path
+    peak_speed, peak_acc = get_sin_velocity_profile_peak(distances, duration)
+    assert np.all(peak_speed <= max_speed) and np.all(peak_acc <= max_acc)
+    # Generate the waypoint distance from start
+    n_steps = int(duration / dt)
+    t_paths = np.tile(np.linspace(0, duration, n_steps), (n_data, 1))  # (N, T)
+    distances = distances[:, None]  # (N, 1)
+    dists = sin_velocity_profile(t_paths, distances, duration)  # (N, T)
 
-    # Add rotation and offset - ensure ee pointing down
-    reflect_z = Pose([0, 0, 0], [np.pi, 0, 0])
-    rotate_z = Pose([0, 0, 0], [0, 0, rotation])
-    pose_delta = rotate_z @ reflect_z @ tool_offset
+    # Generate path in local object frame
+    # Position part
+    # local = start - dist * dir_vec, (N, T, 2)
+    local_xy = starts[:, None, :] - dists[:, :, None] * dir_vecs[:, None, :]
+    # combine height (N, T, 3)
+    local_z = np.full((n_data, n_steps, 1), -h / 2)
+    local_pos = np.concatenate([local_xy, local_z], axis=2)
 
-    # To speed up, use transform matrix directly instead of Pose computation
-    # for i in range(len(times)):
+    # Rotation part
+    # Batch operation for the following operations
+    # for:
+    #     pose_delta = rotate_z @ reflect_z @ tool_offset
     #     global_pose = obj_pose @ Pose(local_pos[i]) @ pose_delta
-    t_delta = pose_delta.matrix
-    t_obj = obj_pose.matrix
-    t_local_pos = np.tile(np.eye(4)[None], (len(times), 1, 1))
-    t_local_pos[:, :3, 3] = local_pos
-    # Get local poses
-    t_local = t_local_pos @ t_delta[None, :, :]
-    # Convert to world frame given the object world pose
-    t_global = t_obj[None, :, :] @ t_local
 
-    ws_pos = t_global[:, :3, 3]
-    ws_quat = matrix_to_quat(t_global[:, :3, :3])
-    ws_path = np.concatenate([ws_pos, ws_quat], axis=1)
-    return times, ws_path
+    # Transform matrix will be size (n_data, n_steps, 4, 4)
+    # add reflection and offset - ensure ee pointing down
+    t_rotate_z = np.tile(np.eye(4)[None, None, :, :], (n_data, 1, 1, 1))
+    t_rotate_z[:, 0, :3, :3] = euler_to_matrix("z", rotations)
+    t_reflect_z = np.eye(4)[None, None, :, :]
+    t_reflect_z[0, 0, :3, :3] = euler_to_matrix("x", np.pi)
+    t_tool_offset = flat_to_matrix(tool_offset)[None, None, :, :]
+    t_delta = t_rotate_z @ t_reflect_z @ t_tool_offset
+
+    # Combine as workspace path
+    t_local_pos = np.tile(np.eye(4)[None, None, :, :], (n_data, n_steps, 1, 1))
+    t_local_pos[:, :, :3, 3] = local_pos
+    # get local poses
+    t_local = t_local_pos @ t_delta
+    # convert to world frame given the object world pose
+    t_obj = flat_to_matrix(obj_states)
+    t_global = t_obj[:, None, :, :] @ t_local
+
+    # Flatten to 7D
+    ws_pos = t_global[:, :, :3, 3]
+    ws_quat = matrix_to_quat(t_global[:, :, :3, :3].reshape(-1, 3, 3))
+    ws_quat = ws_quat.reshape(n_data, n_steps, 4)
+    ws_paths = np.concatenate([ws_pos, ws_quat], axis=-1)
+
+    return t_paths, ws_paths
+
+
+########## Sinusoidal functions ##########
+def get_sin_velocity_profile_peak(dist, duration):
+    """Get the peak speed and acceleration for a sinusoidal velocity profile"""
+    # v_max = 2 * dist / duration
+    # a_max = v_max * np.pi / duration
+    peak_speed = 2 * dist / duration
+    peak_acc = peak_speed * np.pi / duration
+    return peak_speed, peak_acc
+
+
+def sin_velocity_profile(t, dist, duration):
+    """Get the velocity at time t for a given push distance d and duration."""
+    v_max, acc_max = get_sin_velocity_profile_peak(dist, duration)  # (N, 1)
+    # Compute the velocity at time t for each sample given a sin velocity
+    # v = (v_max / 2) * (np.sin(2 * np.pi * t / duration - np.pi / 2) + 1)
+    # a = acc_max * np.sin(2 * np.pi * t / duration)
+    scale = -v_max * duration / 4 / np.pi  # (N,)
+    # get the position d at given time t (N, T)
+    d = scale * np.sin(2 * np.pi * t / duration) + (v_max * t / 2)
+    return d
+
+
+########## Geometry functions ##########
+def euler_to_matrix(seq: str, euler: np.ndarray) -> np.ndarray:
+    """Convert Euler angles to rotation matrix"""
+    quat = euler_to_quat(euler, seq)
+    matrix = quat_to_matrix(quat)
+    return matrix

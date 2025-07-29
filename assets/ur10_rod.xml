@@ -7,33 +7,33 @@
     <default class="ur10">
       <material specular="0.5" shininess="0.25"/>
       <joint axis="0 1 0" range="-6.28319 6.28319" armature="0.1"/>
-      <position ctrlrange="-6.2831 6.2831"/>
-      <general biastype="affine" ctrlrange="-6.2831 6.2831" gainprm="5000" biasprm="0 -5000 -500"/>
+      <position ctrlrange="-6.2831 6.2831" kp="5000" kv="500"/>
 
       <default class="size4">
         <joint damping="10"/>
-        <general forcerange="-330 330"/>
+        <position forcerange="-330 330" kp="17000" kv="1700"/>
       </default>
       <default class="size3">
         <joint damping="5"/>
-        <general forcerange="-150 150"/>
+        <position forcerange="-150 150" kp="14000" kv="1400"/>
         <default class="size3_limited">
           <joint range="-3.1415 3.1415"/>
-          <general ctrlrange="-3.1415 3.1415"/>
+          <position ctrlrange="-3.1415 3.1415"/>
         </default>
       </default>
       <default class="size2">
         <joint damping="2"/>
-        <general forcerange="-56 56"/>
+        <position forcerange="-56 56" kp="9000" kv="900"/>
       </default>
 
       <default class="visual">
         <geom type="mesh" contype="0" conaffinity="0" group="2"/>
       </default>
+      <!-- Not all collision computation is needed -->
       <default class="collision">
-        <geom type="capsule" group="3"/>
+        <geom type="capsule" condim="3" contype="1" conaffinity="1" group="3"/>
       </default>
-      
+
       <site size="0.001" rgba="0.5 0.5 0.5 0.3" group="3"/>
     </default>
   </default>
@@ -68,7 +68,7 @@
   </asset>
 
   <worldbody>
-    <light name="spotlight" mode="targetbodycom" target="wrist_2_link" pos="0 -1 2"/>
+    <light name="top" pos="0 0 2" mode="trackcom"/>
 
     <body name="base" quat="0 0 0 -1" childclass="ur10">
       <inertial mass="4.0" pos="0 0 0" diaginertia="0.0061063308908 0.0061063308908 0.01125"/>
@@ -118,7 +118,7 @@
                   <body name="rod" pos="0 0.2222 0" quat="1 -1 0 0">
                     <inertial pos="0 0 0" mass="0.1" diaginertia="0.001 0.001 0.001"/>
                     <geom type="capsule" size="0.01 0.12" material="gold" class="visual"/>
-                    <geom class="collision" size="0.01 0.12"/>
+                    <geom class="collision" size="0.01 0.12" contype="1" conaffinity="1"/>
                   </body>
                 </body>
               </body>
@@ -130,11 +130,11 @@
   </worldbody>
 
   <actuator>
-    <general class="size4" name="shoulder_pan" joint="shoulder_pan_joint"/>
-    <general class="size4" name="shoulder_lift" joint="shoulder_lift_joint"/>
-    <general class="size3_limited" name="elbow" joint="elbow_joint"/>
-    <general class="size2" name="wrist_1" joint="wrist_1_joint"/>
-    <general class="size2" name="wrist_2" joint="wrist_2_joint"/>
-    <general class="size2" name="wrist_3" joint="wrist_3_joint"/>
+    <position class="size4" name="shoulder_pan" joint="shoulder_pan_joint"/>
+    <position class="size4" name="shoulder_lift" joint="shoulder_lift_joint"/>
+    <position class="size3_limited" name="elbow" joint="elbow_joint"/>
+    <position class="size2" name="wrist_1" joint="wrist_1_joint"/>
+    <position class="size2" name="wrist_2" joint="wrist_2_joint"/>
+    <position class="size2" name="wrist_3" joint="wrist_3_joint"/>
   </actuator>
 </mujoco>

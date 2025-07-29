@@ -1,25 +1,23 @@
 import numpy as np
+import time
 
 import mujoco
 import mujoco.viewer
-from mujoco import mjx
-import jax
+from concurrent.futures import ThreadPoolExecutor, wait
 
-from mjx_utils import mjx_sim_reset, get_mjx_sim_step_n
-from mjx_utils import mjx_get_qpos_data_into, mjx_get_qpos, render_mp4
+from mujoco_utils import render_mp4
 from geometry.pose import Pose
 
 
 class Sim:
     def __init__(
         self,
-        xml_path,
+        xml,
         n_envs,
         robot_joint_dof,
         robot_ee_dof,
         dt=0.1,
         visualize=True,
-        jax_cache="jax_cache",
     ):
         """Mujoco Simulation Environment
 
@@ -28,7 +26,10 @@ class Sim:
         and object poses [robot_dof:].
         """
         # Initialize Mujoco
-        self.mj_model = mujoco.MjModel.from_xml_path(xml_path)
+        if "<mujoco" in xml:
+            self.mj_model = mujoco.MjModel.from_xml_string(xml)
+        else:
+            self.mj_model = mujoco.MjModel.from_xml_path(xml)
         self.mj_data = mujoco.MjData(self.mj_model)
         self.viewer = None
         if visualize:
@@ -36,12 +37,6 @@ class Sim:
                 self.mj_model, self.mj_data
             )
             self.viewer.sync()
-        # Move Mujoco to MJX
-        # JAX persistent compilation cache
-        jax.config.update("jax_compilation_cache_dir", "/tmp/" + jax_cache)
-        # Move Mujoco to GPU
-        self.mjx_model = mjx.put_model(self.mj_model)
-        self.mjx_data = mjx.put_data(self.mj_model, self.mj_data)
 
         # Simulation parameters
         # qpos idx
@@ -56,52 +51,84 @@ class Sim:
         # time
         self.dt = dt
         time_step = self.mj_model.opt.timestep
+        self.n_substeps = int(self.dt // time_step)
+        assert (
+            self.dt % time_step == 0
+        ), f"dt must be a multiple of sim time step: {time_step}"
 
         # Prepare parallelization
-        # get Jit functions
         self.n_envs = n_envs
-        self.rng_key = jax.random.PRNGKey(0)
-        self.rng_key = jax.random.split(self.rng_key, self.n_envs)
-        mjx_sim_step_n = get_mjx_sim_step_n(int(self.dt // time_step))
-        self.jit_reset = jax.jit(
-            jax.vmap(mjx_sim_reset, in_axes=(None, 0, 0, 0, 0))
-        )
-        self.jit_step = jax.jit(jax.vmap(mjx_sim_step_n, in_axes=(None, 0, 0)))
-        # batch the data
-        self.mjx_data = jax.vmap(lambda rng: self.mjx_data.replace())(
-            self.rng_key
-        )
+        self.mj_datas = [mujoco.MjData(self.mj_model) for _ in range(n_envs)]
+        self.mj_datas_qpos = [mj_data.qpos for mj_data in self.mj_datas]
+        self.executor = ThreadPoolExecutor(max_workers=self.n_envs)
 
         # Store the initial state for reset
-        self.init_qpos = mjx_get_qpos(self.mjx_data)
+        self.init_qpos = np.array(self.mj_datas_qpos)
 
     def get_sim_info(self):
         """Return simulation infomation"""
         return (self.n_envs, self.dt)
 
-    def run_sim(self, duration):
-        """Run the simulation for a given duration"""
+    ########## Parallel Simulation ##########
+    def run_sim(self, duration, ctrl=None, thread_fn=None):
+        """Run the simulation for a given duration with optional function"""
+        if duration <= 0:
+            return
         n_steps = int(duration // self.dt)
-        for _ in range(n_steps):
-            self.step()
+        self.step_n(n_steps, ctrl, thread_fn)
 
-    def step(self, ctrl=None):
-        """Step the simulation"""
-        self.mjx_data = self.jit_step(self.mjx_model, self.mjx_data, ctrl)
+    def _step_n_thread(
+        self, thread_i, n_steps, mj_model, mj_data, ctrl=None, thread_fn=None
+    ):
+        """Step the simulation for one thread"""
+        for j in range(n_steps):
+            if ctrl is not None:
+                mj_data.ctrl[:] = ctrl[j]
+            if thread_fn is not None:
+                thread_fn(thread_i, j, mj_model, mj_data)
+            for _ in range(self.n_substeps):
+                mujoco.mj_step(mj_model, mj_data)
+
+    def step_n(self, n_steps, ctrl=None, thread_fn=None):
+        """Step the simulation n times with optional function"""
+
+        def vis_thread_fn(thread_i, j, mj_model, mj_data):
+            """Thread function to visualize"""
+            if thread_fn is not None:
+                thread_fn(thread_i, j, mj_model, mj_data)
+            if thread_i == 0:
+                self.vis_sync(thread_i)
+
         if self.viewer:
-            self.vis_sync()
+            fn = vis_thread_fn
+        else:
+            fn = thread_fn
+        futures = [
+            self.executor.submit(
+                self._step_n_thread,
+                i,
+                n_steps,
+                self.mj_model,
+                self.mj_datas[i],
+                ctrl,
+                fn,
+            )
+            for i in range(self.n_envs)
+        ]
+        wait(futures)
 
     def reset(self, wait_time=0.5):
         """Reset the simulation to the initial state"""
-        # Reset the simulation
-        self.mjx_data = self.jit_reset(
-            self.mjx_model,
-            self.mjx_data,
-            self.init_qpos,
-            None,
+        # Reset is simple and not worth to actually ditribute this
+        zero_vel = np.zeros(self.mj_model.nv)
+        for i, mj_data in enumerate(self.mj_datas):
+            mujoco.mj_resetData(self.mj_model, mj_data)
+            mj_data.qpos[:] = self.init_qpos[i]
+            mj_data.qvel[:] = zero_vel
             # assume robot joint is position control
-            self.init_qpos[:, : self.robot_joint_dof + self.robot_ee_dof],
-        )
+            mj_data.ctrl[:] = self.init_qpos[
+                i, : self.robot_joint_dof + self.robot_ee_dof
+            ]
         # Wait for the simulation to stabilize
         self.run_sim(wait_time)
 
@@ -109,6 +136,7 @@ class Sim:
         """Close the simulation"""
         if self.viewer:
             self.viewer.close()
+        self.executor.shutdown(wait=True)
 
     ########## Object-related functions ##########
     def set_obj_init_poses(self, init_pose, obj_idx=0, env_idx=None):
@@ -119,9 +147,9 @@ class Sim:
     def get_obj_pose(self, obj_idx=0, env_idx=None):
         """Return object information"""
         _, env_idx = self._preprocess_values([0], env_idx)
-        return np.array(
-            self.mjx_data.qpos[np.ix_(env_idx, self.obj_idxs[obj_idx])]
-        )
+        return np.array(self.mj_datas_qpos)[
+            np.ix_(env_idx, self.obj_idxs[obj_idx])
+        ]
 
     ########## Robot-related functions ##########
     def set_robot_init_joints(self, joints, ee_joints=None, env_idx=None):
@@ -135,14 +163,14 @@ class Sim:
     def get_robot_joints(self, env_idx=None):
         """Get the robot joint positions"""
         _, env_idx = self._preprocess_values([0], env_idx)
-        return np.array(
-            self.mjx_data.qpos[np.ix_(env_idx, self.robot_joint_idx)]
-        )
+        return np.array(self.mj_datas_qpos)[
+            np.ix_(env_idx, self.robot_joint_idx)
+        ]
 
     def get_robot_ee(self, env_idx=None):
         """Get the robot end-effector positions"""
         _, env_idx = self._preprocess_values([0], env_idx)
-        return np.array(self.mjx_data.qpos[np.ix_(env_idx, self.robot_ee_idx)])
+        return np.array(self.mj_datas_qpos)[np.ix_(env_idx, self.robot_ee_idx)]
 
     def move_ee(self, ee, env_idx=None, wait_time=0.0):
         """Set the robot end-effector positions"""
@@ -164,20 +192,20 @@ class Sim:
         """Move the robot joint positions"""
         values, env_idx = self._preprocess_values(values, env_idx)
         # Set the control
-        ctrl = np.array(self.mjx_data.ctrl)
-        ctrl[np.ix_(env_idx, joint_idxs)] = values
-        self.mjx_data = self.mjx_data.replace(ctrl=ctrl)
+        for i, value in enumerate(values):
+            self.mj_datas[env_idx[i]].ctrl[joint_idxs] = value
         self.run_sim(wait_time)
 
     def _set_robot(self, joint_idxs, values, env_idx=None):
         """Set the robot joint positions"""
         values, env_idx = self._preprocess_values(values, env_idx)
-        # Set the control
-        self._move_robot(joint_idxs, values, env_idx, 0.0)
-        # Set the qpos
-        qpos = np.array(self.mjx_data.qpos)
-        qpos[np.ix_(env_idx, joint_idxs)] = values
-        self.mjx_data = self.mjx_data.replace(qpos=qpos)
+        for i, value in enumerate(values):
+            # Set the qpos
+            self.mj_datas[env_idx[i]].qpos[joint_idxs] = value
+            self.mj_datas[env_idx[i]].qvel[joint_idxs] = 0
+            # Set the ctrl
+            self.mj_datas[env_idx[i]].ctrl[joint_idxs] = value
+            mujoco.mj_forward(self.mj_model, self.mj_datas[env_idx[i]])
 
     def execute_waypoints(
         self, waypoints, wait_time=0.0, return_intermediate=False
@@ -195,31 +223,41 @@ class Sim:
             + "than the number of simulation environment"
         )
         env_idx = np.arange(n_trials)
+        extra_steps = int(wait_time // self.dt)
 
         # Save the initial qpos first
-        init_qpos = mjx_get_qpos(self.mjx_data)[:n_trials]
+        init_qpos = np.array(self.mj_datas_qpos)[:n_trials]
         if return_intermediate:
             intermediate_qpos = np.zeros(
-                (n_run_steps + 1, n_trials, init_qpos.shape[1])
+                (1 + n_run_steps + extra_steps, n_trials, init_qpos.shape[1])
             )
-            intermediate_qpos[0] = init_qpos
+
+        # Define the thread_fn to be passed to parallel_step_n
+        def thread_fn(env_i, step_i, mj_model, mj_data):
+            """Thread function to be run in parallel"""
+            mj_data.ctrl[self.robot_joint_idx] = waypoints[step_i, env_i]
+            if return_intermediate:
+                intermediate_qpos[step_i, env_i] = mj_data.qpos
 
         # Start execution
-        # init the joint position
         self.set_joints(waypoints[0], env_idx)
-
         # Run the sim with the computed trajectory
-        for k in range(n_run_steps):
-            self.move_joints(waypoints[k], env_idx)
-            self.step()
+        self.step_n(n_run_steps, thread_fn=thread_fn)
+
+        # Define the thread_fn to be passed to parallel_step_n
+        def thread_stabilize_fn(env_i, step_i, mj_model, mj_data):
+            """Thread function to be run in parallel"""
             if return_intermediate:
-                qpos = mjx_get_qpos(self.mjx_data)[:n_trials]
-                intermediate_qpos[k + 1] = qpos
+                intermediate_qpos[step_i, env_i] = mj_data.qpos
+
         # Run for extra time to stabilize the simulation
-        self.run_sim(wait_time)
+        self.step_n(extra_steps, thread_fn=thread_stabilize_fn)
 
         # Get the last qpos
-        last_qpos = mjx_get_qpos(self.mjx_data)[:n_trials]
+        last_qpos = np.array(self.mj_datas_qpos)[:n_trials]
+        # sim step is run after the thread_fn, store qpos after the last step
+        if return_intermediate:
+            intermediate_qpos[-1] = last_qpos
 
         # Compute the relative poses
         init_obj_qpos = init_qpos[:, self.obj_idxs.flatten()]
@@ -268,12 +306,13 @@ class Sim:
 
         return values, env_idx
 
-    def vis_sync(self, env_idx=0):
+    def vis_sync(self, env_idx=0, real_time=False):
         """Sync the simulation state to the viewer"""
-        mjx_get_qpos_data_into(
-            self.mj_data, self.mj_model, self.mjx_data, env_id=env_idx
-        )
+        self.mj_data.qpos[:] = self.mj_datas_qpos[env_idx]
+        mujoco.mj_forward(self.mj_model, self.mj_data)
         self.viewer.sync()
+        if real_time:
+            time.sleep(self.dt)
 
     def render_state(self, state, filename):
         """Render the state qpos (n_frame, nq) into a mp4 video"""
@@ -299,7 +338,11 @@ def test(sim: Sim):
         waypoints, wait_time=1.0, return_intermediate=True
     )
     print(relative_qpos[0], relative_qpos.shape)
-    print(intermediate_qpos[-1, 0], intermediate_qpos.shape)
+    print(
+        intermediate_qpos[0, 0],
+        intermediate_qpos[-1, 0],
+        intermediate_qpos.shape,
+    )
 
     # Test getters
     print(sim.get_sim_info())
@@ -311,12 +354,15 @@ def test(sim: Sim):
 
 if __name__ == "__main__":
     np.set_printoptions(suppress=True, precision=5)
+
+    xml = open("mujoco_sim.xml").read()
+    xml = xml.replace("object_name", "cracker_box_flipped")
     sim = Sim(
-        "mjx_sim.xml",
-        n_envs=100,
+        xml,
+        n_envs=20,
         robot_joint_dof=6,
         robot_ee_dof=0,
-        dt=0.01,
+        dt=0.02,
         visualize=True,
     )
     test(sim)

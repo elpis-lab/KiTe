@@ -5,7 +5,7 @@ from geometry.trajectory import SplineTrajectory
 
 
 class IK:
-    """A IK package that uses Expansion GRR that
+    """An IK package that uses Expansion GRR that
     converts workspace path to robot joint trajectory
     """
 
@@ -24,13 +24,14 @@ class IK:
 
     def ws_path_to_traj(
         self,
-        robot_base_pose: Pose,
         t_path: np.ndarray,
         ws_path: np.ndarray,
+        robot_base_state: np.ndarray = [0, 0, 0, 1, 0, 0, 0],
         none_on_fail: bool = False,
     ):
         """Convert a workspace path with time stamps to a trajectory"""
         # Convert the work space path to robot frame
+        robot_base_pose = Pose(robot_base_state[:3], robot_base_state[3:])
         ws_local = np.array(
             [
                 (robot_base_pose.invert @ Pose(p[:3], p[3:])).flat

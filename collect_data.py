@@ -1,5 +1,7 @@
 import numpy as np
 from tqdm import tqdm
+from scipy.spatial.transform import Rotation as R
+
 from geometry.pose import Pose, euler_to_quat
 from ik import IK
 from geometry.random_push import (
@@ -7,18 +9,104 @@ from geometry.random_push import (
     generate_push_params,
     generate_path_form_params,
 )
-from geometry.model_object import get_obj_shape
+from geometry.object_model import get_obj_shape
 
 from sim_network import SimClient
 
 
-def get_random_init_states(
-    n_envs, z, pos_range=(-0.2, 0.2, -0.5, -0.9), euler_range=(-np.pi, np.pi)
+def execute_push(client, ik, init_state, t_path, ws_path, dt):
+    """Execute push and return SE2 pose"""
+    # Solve IK
+    pos_waypoints = []
+    for j in range(len(ws_path)):
+        traj = ik.ws_path_to_traj(t_path[j], ws_path[j])
+        waypoints = traj.to_step_waypoints(dt)
+        pos_waypoints.append(waypoints)
+    # Stack (num_time_step, num_envs, robot_dof) and send it to Sim to execute
+    pos_waypoints = np.stack(pos_waypoints, axis=1)
+
+    # Start execution
+    client.execute("set_obj_init_poses", [init_state, 0])
+    client.execute("reset")
+    poses = client.execute("execute_waypoints", [pos_waypoints, 1.0])
+    se2_pose = project_se3_pose(poses, axis=[0, 1, 0])
+    return se2_pose
+
+
+def collect_data(obj_name, n_data, random_init=True, push_params=None):
+    """Collect n_data for obj_name"""
+    # Need to run sim_network.py first
+    # Sim class
+    client = SimClient()
+    # IK solver - Expansion GRR
+    ik = IK("ur10_rod")
+    tool_offset = Pose([0, 0, -0.02]).flat
+
+    # Initial state parameters
+    n_envs, dt = client.execute("get_sim_info")
+    client.execute(
+        "set_robot_init_joints",
+        [[np.pi / 2, -1.7, 2, -1.87, -np.pi / 2, np.pi]],
+    )
+    obj_shape = get_obj_shape(f"assets/{obj_name}/textured.obj")
+
+    # Data check and initialize container
+    assert n_data > 0 and (n_data < n_envs or n_data % n_envs == 0)
+    n_rounds = max(int(n_data // n_envs), 1)
+    results = np.zeros((n_data, 3))
+
+    # Get initial object poses
+    if random_init:
+        init_states = get_random_se2_states(n_data, obj_shape[2] / 2)
+    else:
+        init_states = np.tile(
+            [0, -0.7, obj_shape[2] / 2, 1, 0, 0, 0], (n_data, 1)
+        )
+    # Compute push parameters if not pre-provided
+    if push_params is None:
+        push_params, t_paths, ws_paths = get_random_push(
+            n_data, init_states, obj_shape, tool_offset
+        )
+    else:
+        assert len(push_params) == n_data
+        t_paths, ws_paths = generate_path_form_params(
+            init_states, obj_shape, push_params, tool_offset
+        )
+
+    # Start collectin
+    for i in tqdm(range(n_rounds)):
+        # Push parameters for this round
+        init_state = init_states[n_envs * i : n_envs * (i + 1)]
+        t_path = t_paths[n_envs * i : n_envs * (i + 1)]
+        ws_path = ws_paths[n_envs * i : n_envs * (i + 1)]
+
+        # Execute this round
+        se2_pose = execute_push(client, ik, init_state, t_path, ws_path, dt)
+        results[i * n_envs : (i + 1) * n_envs] = se2_pose
+
+    client.close()
+    return push_params, results
+
+
+def collect_repetitive_data(obj_name, n_data, n_reps, random_init=True):
+    """Collect n_reps * n_data for obj_name"""
+    # Generate random push waypoints to repeat
+    push_params = generate_push_params(n_data)
+    results_rep = np.zeros((n_reps, n_data, 3))
+
+    # Start collecting
+    for r in range(n_reps):
+        _, results = collect_data(obj_name, n_data, random_init, push_params)
+        results_rep[r] = results
+
+    return push_params, results_rep
+
+
+########## Helper functions ##########
+def get_random_se2_states(
+    n_envs, z=0, pos_range=(-0.2, 0.2, -0.5, -0.9), euler_range=(-np.pi, np.pi)
 ):
-    """
-    Get random initial states for n_envs
-    Also return eulers for rotate_scene
-    """
+    """Get random SE2 states for n_envs"""
     pos_x = np.random.uniform(pos_range[0], pos_range[1], (n_envs, 1))
     pos_y = np.random.uniform(pos_range[2], pos_range[3], (n_envs, 1))
     pos_z = z * np.ones((n_envs, 1))
@@ -30,150 +118,50 @@ def get_random_init_states(
     return np.concatenate([pos, quat], axis=-1)
 
 
-def collect_data(obj_name, n_data, random_init=True):
-    """Collect n_data for obj_name"""
-    # Need to run sim_network.py first
-    # Sim class
-    client = SimClient()
-    # IK solver - Expansion GRR
-    ik = IK("ur10_rod")
-    tool_offset = Pose([0, 0, -0.02])
+def project_se3_pose(poses, axis=[0, 1, 0]):
+    """Project SE3 pose to SE2"""
+    # Position
+    xy = poses[:, :2]
+    # Rotation
+    # assuming axis is the forward axis that is always
+    # parallel to the table direction
+    # find the angle difference for relative rotation
+    rotations = R.from_quat(poses[:, [4, 5, 6, 3]])
+    axis0 = np.tile(axis, (poses.shape[0], 1))
+    axis1 = rotations.apply(axis0)
+    # dot and perp‐cross in 2D
+    dots = np.sum(axis0[:, :2] * axis1[:, :2], axis=1)
+    cross_zs = axis0[:, 0] * axis1[:, 1] - axis0[:, 1] * axis1[:, 0]
+    # signed angle = atan2(sin, cos)
+    yaw = np.arctan2(cross_zs, dots)[:, None]
 
-    # Initial state parameters
-    n_envs, dt = client.execute("get_sim_info")
-    client.execute(
-        "set_robot_init_joints",
-        [[np.pi / 2, -1.7, 2, -1.87, -np.pi / 2, np.pi]],
-    )
-    # assume all objects start the same
-    obj_shape = get_obj_shape(f"assets/{obj_name}/textured_vhacd.stl")
-
-    # Data container
-    assert n_data > 0 and n_data % n_envs == 0
-    n_rounds = int(n_data // n_envs)
-    data_x = np.zeros((n_data, 3))
-    data_y = np.zeros((n_data, 3))
-
-    # Start collecting
-    for i in tqdm(range(n_rounds)):
-        params = []
-        pos_waypoints = []
-
-        # Randomized initial states
-        if random_init:
-            init_states = get_random_init_states(n_envs, obj_shape[2] / 2)
-        else:
-            init_states = np.tile(
-                [0, -0.7, obj_shape[2] / 2, 1, 0, 0, 0], (n_envs, 1)
-            )
-        client.execute("set_obj_init_poses", [init_states, 0])
-        client.execute("reset")
-
-        # Compute push trajectories
-        for j in range(n_envs):
-            push_params, times, ws_path = get_random_push(
-                Pose(init_states[j][:3], init_states[j][3:]),
-                obj_shape,
-                tool_offset,
-            )
-            traj = ik.ws_path_to_traj(Pose(), times, ws_path)
-            waypoints = traj.to_step_waypoints(dt)
-
-            params.append(push_params)
-            pos_waypoints.append(waypoints)
-
-        # Stack (num_time_step, trials, robot_dof) and send it to Sim to execute
-        params = np.array(params)
-        pos_waypoints = np.stack(pos_waypoints, axis=1)
-        pose = client.execute("execute_waypoints", pos_waypoints)
-
-        # TODO
-        # Convert pose to 3D SE2 pose
-        # Save data
-        data_x[i * n_envs : (i + 1) * n_envs] = params
-        data_y[i * n_envs : (i + 1) * n_envs] = pose
-
-    np.save(f"data/x_{obj_name}.npy", data_x)
-    np.save(f"data/y_{obj_name}.npy", data_y)
-    client.close()
-
-
-def collect_repetitive_data(obj_name, n_data, n_reps, random_init=True):
-    """Collect n_reps * n_data for obj_name"""
-    # Need to run sim_network.py first
-    # Sim class
-    client = SimClient()
-    # IK solver - Expansion GRR
-    ik = IK("ur10_rod")
-    tool_offset = Pose([0, 0, -0.02])
-
-    # Initial state parameters
-    n_envs, dt = client.execute("get_sim_info")
-    client.execute(
-        "set_robot_init_joints",
-        [[np.pi / 2, -1.7, 2, -1.87, -np.pi / 2, np.pi]],
-    )
-    # assume all objects start the same
-    obj_shape = get_obj_shape(f"assets/{obj_name}/textured_vhacd.stl")
-
-    # Data container
-    assert n_data > 0 and n_data == n_envs
-    data_x = np.zeros((n_data, 3))
-    data_y = np.zeros((n_reps, n_data, 3))
-
-    # Generate random push waypoints to repeat
-    params = []
-    for j in range(n_data):
-        push_params = generate_push_params(obj_shape)
-        params.append(push_params)
-    params = np.array(params)
-    data_x = params
-
-    # Start collecting
-    for i in tqdm(range(n_reps)):
-        pos_waypoints = []
-
-        # Randomized initial states
-        if random_init:
-            init_states = get_random_init_states(n_envs, obj_shape[2] / 2)
-        else:
-            init_states = np.tile(
-                [0, -0.7, obj_shape[2] / 2, 1, 0, 0, 0], (n_envs, 1)
-            )
-        client.execute("set_obj_init_poses", [init_states, 0])
-        client.execute("reset")
-
-        # Compute push trajectories
-        for j in range(n_data):
-            times, ws_path = generate_path_form_params(
-                Pose(init_states[j][:3], init_states[j][3:]),
-                obj_shape,
-                params[j],
-                tool_offset,
-            )
-            traj = ik.ws_path_to_traj(Pose(), times, ws_path)
-            waypoints = traj.to_step_waypoints(dt)
-            pos_waypoints.append(waypoints)
-
-        # Stack (num_time_step, trials, robot_dof) and send it to Sim to execute
-        pos_waypoints = np.stack(pos_waypoints, axis=1)
-        pose = client.execute("execute_waypoints", pos_waypoints)
-
-        # TODO
-        # Convert pose to 3D SE2 pose
-        # Save data
-        # data_y[i] = pose
-
-    np.save(f"data/x_{obj_name}_rep{n_reps}.npy", data_x)
-    np.save(f"data/y_{obj_name}_rep{n_reps}.npy", data_y)
-    client.close()
+    se2_pose = np.concatenate([xy, yaw], axis=-1)
+    return se2_pose
 
 
 if __name__ == "__main__":
-    seed = 0
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "obj_name", nargs="?", default="master_chef_can_flipped"
+    )
+    args = parser.parse_args()
+    seed = 42
     np.random.seed(seed)
     np.set_printoptions(precision=4, suppress=True)
 
-    obj_name = "cracker_box_flipped"
-    # collect_data(obj_name, 10)
-    collect_repetitive_data(obj_name, 10, 3)
+    # Collect repetitive data
+    n_data = 1000
+    n_reps = 10
+    push_params, results = collect_repetitive_data(
+        args.obj_name, n_data, n_reps
+    )
+    np.save(f"data/x_{args.obj_name}_{n_data}x{n_reps}.npy", push_params)
+    np.save(f"data/y_{args.obj_name}_{n_data}x{n_reps}.npy", results)
+
+    # Collect data
+    n_data = 10000
+    push_params, results = collect_data(args.obj_name, n_data)
+    np.save(f"data/x_{args.obj_name}.npy", push_params)
+    np.save(f"data/y_{args.obj_name}.npy", results)

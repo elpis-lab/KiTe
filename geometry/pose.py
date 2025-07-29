@@ -132,7 +132,7 @@ class Pose:
 
     def copy(self) -> Pose:
         """Copy a pose"""
-        return Pose(self.position.copy(), self.rotation.copy())
+        return Pose(self.position, self.rotation)
 
     def __repr__(self) -> str:
         """Return a string representation of the pose"""
@@ -225,27 +225,49 @@ class SE2Pose(Pose):
         return f"SE2 Pose({position[0]}, {position[1]}, {euler})"
 
 
-# Helper quaternion functions
+# Helper geometric conversion functions
 def euler_to_quat(
-    angles: np.ndarray | list[float], degrees: bool = False
+    angles: np.ndarray | list[float], seq: str = "xyz", degrees: bool = False
 ) -> np.ndarray:
     """Convert Euler angles to Quaternion (w, x, y, z)"""
-    r = R.from_euler("xyz", angles, degrees=degrees)
+    r = R.from_euler(seq, angles, degrees=degrees)
     return xyzw_to_wxyz(r.as_quat())
 
 
 def quat_to_euler(
-    quat: np.ndarray | list[float], degrees: bool = False
+    quat: np.ndarray | list[float], seq: str = "xyz", degrees: bool = False
 ) -> np.ndarray:
     """Convert Quaternion (w, x, y, z) to Euler angles"""
     r = R.from_quat(wxyz_to_xyzw(quat))
-    return r.as_euler("xyz", degrees=degrees)
+    return r.as_euler(seq, degrees=degrees)
 
 
 def matrix_to_quat(matrix: np.ndarray) -> np.ndarray:
-    """Convert 4x4 matrix to Quaternion (w, x, y, z)"""
+    """Convert rotation matrix to Quaternion (w, x, y, z)"""
     r = R.from_matrix(matrix)
     return xyzw_to_wxyz(r.as_quat())
+
+
+def quat_to_matrix(quat: np.ndarray) -> np.ndarray:
+    """Convert Quaternion (w, x, y, z) to rotation matrix"""
+    r = R.from_quat(wxyz_to_xyzw(quat))
+    return r.as_matrix()
+
+
+def flat_to_matrix(flat: np.ndarray) -> np.ndarray:
+    """Convert a flat 7D array to a 4x4 homogeneous matrix"""
+    if flat.ndim == 1:
+        flat = flat[None, :]
+    # Convert to matrices
+    positions = flat[:, :3]
+    rotations = quat_to_matrix(flat[:, 3:])
+    matrices = np.tile(np.eye(4), (flat.shape[0], 1, 1))
+    matrices[:, :3, 3] = positions
+    matrices[:, :3, :3] = rotations
+
+    if flat.shape[0] == 1:
+        return matrices[0]
+    return matrices
 
 
 # Utils for quaternion format conversion between scipy and genesis

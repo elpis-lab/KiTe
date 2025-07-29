@@ -2,8 +2,10 @@ import numpy as np
 import socket
 import pickle
 import struct
+import traceback
 
-from sim import Sim
+# from mjx_sim import Sim
+from mujoco_sim import Sim
 
 PORT = 8888
 
@@ -63,6 +65,7 @@ class SimServer:
 
                 except Exception as e:
                     print(f"Error executing command function '{command}': {e}")
+                    traceback.print_exc()
                     continue
             else:
                 print(f"Unknown command function {command}")
@@ -209,13 +212,26 @@ def deserialize_data(data):
 
 
 if __name__ == "__main__":
-    np.set_printoptions(suppress=True, precision=5)
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "obj_name", nargs="?", default="master_chef_can_flipped"
+    )
+    args = parser.parse_args()
+    seed = 42
+    np.random.seed(seed)
+    np.set_printoptions(precision=4, suppress=True)
+
+    # Initialize simulation
+    xml = open("mujoco_sim.xml").read()
+    xml = xml.replace("object_name", args.obj_name)
     sim = Sim(
-        "mjx_sim.xml",
-        n_envs=10,
+        xml,
+        n_envs=20,
         robot_joint_dof=6,
         robot_ee_dof=0,
-        dt=0.01,
+        dt=0.02,
         visualize=True,
     )
     server = SimServer(sim)
