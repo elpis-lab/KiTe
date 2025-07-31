@@ -8,7 +8,7 @@ def get_random_push(
     n_params: int,
     obj_states: np.ndarray,
     obj_shape: tuple[float, float, float],
-    tool_offset: np.ndarray,
+    tool_offset: np.ndarray = np.array([0, 0, 0, 1, 0, 0, 0]),
     rotation_range: tuple[float, float] = (0, 2 * np.pi),  # ang to push from
     side_range: tuple[float, float] = (-0.4, 0.4),  # relative side offset
     distance_range: tuple[float, float] = (0, 0.3),  # push distance
@@ -67,7 +67,7 @@ def generate_path_form_params(
     obj_states: np.ndarray,
     obj_shape: tuple[float, float, float],
     push_params: np.ndarray,
-    tool_offset: np.ndarray,
+    tool_offset: np.ndarray = np.array([0, 0, 0, 1, 0, 0, 0]),
     pre_push_offset: float = 0.02,
     duration: float = 3,
     dt: float = 0.1,
@@ -118,7 +118,7 @@ def generate_path_form_params(
     # local = start - dist * dir_vec, (N, T, 2)
     local_xy = starts[:, None, :] - dists[:, :, None] * dir_vecs[:, None, :]
     # combine height (N, T, 3)
-    local_z = np.full((n_data, n_steps, 1), -h / 2)
+    local_z = np.zeros((n_data, n_steps, 1))
     local_pos = np.concatenate([local_xy, local_z], axis=2)
 
     # Rotation part
@@ -150,7 +150,6 @@ def generate_path_form_params(
     ws_quat = matrix_to_quat(t_global[:, :, :3, :3].reshape(-1, 3, 3))
     ws_quat = ws_quat.reshape(n_data, n_steps, 4)
     ws_paths = np.concatenate([ws_pos, ws_quat], axis=-1)
-
     return t_paths, ws_paths
 
 

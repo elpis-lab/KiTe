@@ -2,7 +2,7 @@ import numpy as np
 from tqdm import tqdm
 from scipy.spatial.transform import Rotation as R
 
-from geometry.pose import Pose, euler_to_quat
+from geometry.pose import euler_to_quat
 from ik import IK
 from geometry.random_push import (
     get_random_push,
@@ -40,7 +40,6 @@ def collect_data(obj_name, n_data, random_init=True, push_params=None):
     client = SimClient()
     # IK solver - Expansion GRR
     ik = IK("ur10_rod")
-    tool_offset = Pose([0, 0, -0.02]).flat
 
     # Initial state parameters
     n_envs, dt = client.execute("get_sim_info")
@@ -65,12 +64,12 @@ def collect_data(obj_name, n_data, random_init=True, push_params=None):
     # Compute push parameters if not pre-provided
     if push_params is None:
         push_params, t_paths, ws_paths = get_random_push(
-            n_data, init_states, obj_shape, tool_offset
+            n_data, init_states, obj_shape
         )
     else:
         assert len(push_params) == n_data
         t_paths, ws_paths = generate_path_form_params(
-            init_states, obj_shape, push_params, tool_offset
+            init_states, obj_shape, push_params
         )
 
     # Start collectin
@@ -149,6 +148,12 @@ if __name__ == "__main__":
     np.random.seed(seed)
     np.set_printoptions(precision=4, suppress=True)
 
+    # Collect data
+    n_data = 10000
+    push_params, results = collect_data(args.obj_name, n_data)
+    np.save(f"data/x_{args.obj_name}_{n_data}.npy", push_params)
+    np.save(f"data/y_{args.obj_name}_{n_data}.npy", results)
+
     # Collect repetitive data
     n_data = 1000
     n_reps = 10
@@ -158,8 +163,11 @@ if __name__ == "__main__":
     np.save(f"data/x_{args.obj_name}_{n_data}x{n_reps}.npy", push_params)
     np.save(f"data/y_{args.obj_name}_{n_data}x{n_reps}.npy", results)
 
-    # Collect data
-    n_data = 10000
-    push_params, results = collect_data(args.obj_name, n_data)
-    np.save(f"data/x_{args.obj_name}.npy", push_params)
-    np.save(f"data/y_{args.obj_name}.npy", results)
+    # Collect repetitive data (testing)
+    n_data = 1000
+    n_reps = 10
+    push_params, results = collect_repetitive_data(
+        args.obj_name, n_data, n_reps
+    )
+    np.save(f"data/x_{args.obj_name}_test.npy", push_params)
+    np.save(f"data/y_{args.obj_name}_test.npy", results)

@@ -286,10 +286,10 @@ class Sim:
     def _preprocess_values(self, values, env_idx):
         """Preprocess the values and env_idx to match"""
         # Preprocess env_idx first
-        # if not provided, use all environments
+        # if not provided, use environments that values need
         if env_idx is None:
-            env_idx = np.arange(self.n_envs)
-        # if a single environment, convert to array
+            env_idx = np.arange(len(values))
+        # if a single environment provided, convert to array
         if isinstance(env_idx, int):
             env_idx = np.array([env_idx])
         env_idx = np.array(env_idx)

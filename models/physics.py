@@ -17,7 +17,7 @@ def push_physics(param, obj_size=(0.1, 0.1), k_steps=100, push_duration=3):
     vs, accs = sin_velocity_profile(t, distance, push_duration)
 
     # Calculate the final state
-    progress_states(rot, side, vs, accs, t[1] - t[0], obj_size)
+    x, y, theta = progress_states(rot, side, vs, accs, t[1] - t[0], obj_size)
     x_final = x[:, -1]  # (N,)
     y_final = y[:, -1]  # (N,)
     theta_final = theta[:, -1]  # (N,)
@@ -53,9 +53,23 @@ def progress_states(rot, side, velocities, accs, dt, obj_size=(0.1, 0.1)):
     # 4, The first three steps will definitelyresult in over-pushing,
     #    so we need to clip the push distance to compensate
 
-    # First assume the push is from the right side, then rotate it back
+    # First assume the push is from the right side, then rotate it back later
+    cos_rot = torch.cos(rot)
+    sin_rot = torch.sin(rot)
+
+    # Adjust the push side dimensions
+    # if push from right/left, then size_x is the width, size_y is the height
+    # if push from top/bottom, then size_x is the height, size_y is the width
+    obj_size = torch.as_tensor(obj_size, device=rot.device)
+    obj_size = obj_size.unsqueeze(0).expand(rot.shape[0], 2)
+    obj_size_swapped = obj_size[:, [1, 0]]
+    swap_mask = (torch.abs(cos_rot) < 1e-3).expand(-1, 2)  # (N, 2)
+    obj_size = torch.where(swap_mask, obj_size_swapped, obj_size)
+    size_x = obj_size[:, 0].unsqueeze(1)
+    size_y = obj_size[:, 1].unsqueeze(1)
+
     # Push contact point
-    x_c = obj_size[0] / 2
+    x_c = size_x / 2
     y_c = side
     denom = c**2 + x_c**2 + y_c**2
     # Pusher velocity, assume always perpendicular to the object (non-slip)
@@ -82,13 +96,13 @@ def progress_states(rot, side, velocities, accs, dt, obj_size=(0.1, 0.1)):
     # Compute the corresponding corner's y coordinates
     # corner point p is [size_x/2, sign(side) * size_y/2]
     p_y = (
-        sin_theta * obj_size[0] / 2
-        + cos_theta * torch.sign(side) * obj_size[1] / 2
+        sin_theta * size_x / 2
+        + cos_theta * torch.sign(side) * size_y / 2
         + y_local
     )
     # Check when the y coordinates goes beyond y_c
     mask = p_y.abs() <= y_c.abs()  # (N, K)
-    mask = mask.cumsum(dim=1) > 0  # disable all contacts after the first one
+    mask = mask.cumsum(dim=1) > 1  # disable all contacts after the first one
     dx_local = dx_local.masked_fill(mask, 0.0)
     dy_local = dy_local.masked_fill(mask, 0.0)
     dtheta = dtheta.masked_fill(mask, 0.0)
@@ -98,8 +112,6 @@ def progress_states(rot, side, velocities, accs, dt, obj_size=(0.1, 0.1)):
     y_local = torch.cumsum(dy_local, axis=1)
     theta = torch.cumsum(dtheta, axis=1)
     # Adjust position - rotate back to global given the push direction
-    cos_rot = torch.cos(rot)
-    sin_rot = torch.sin(rot)
     x = (x_local * cos_rot) - (y_local * sin_rot)  # (N, K)
     y = (x_local * sin_rot) + (y_local * cos_rot)  # (N, K)
 
@@ -154,7 +166,10 @@ def visualize_process(param, vs, t, x, y, theta, obj_size=(0.1, 0.1)):
 
     # Draw the push arrow.
     # We assume that the pusher contacts the object at a point defined in the
-    contact_local = np.array([obj_size[0] / 2, side])
+    if np.abs(np.cos(rot)) < 1e-3:
+        contact_local = np.array([obj_size[1] / 2, side])
+    else:
+        contact_local = np.array([obj_size[0] / 2, side])
     # Rotate the local contact point by the push’s global rotation (rot)
     R_init = np.array(
         [[np.cos(rot), -np.sin(rot)], [np.sin(rot), np.cos(rot)]]
@@ -214,8 +229,8 @@ def visualize_process(param, vs, t, x, y, theta, obj_size=(0.1, 0.1)):
 
 if __name__ == "__main__":
     # Set up an example push
-    push_param = torch.tensor([[0, 0.021, 0.3], [np.pi, 0.04, 0.3]])
-    obj_size = (0.16, 0.21)
+    push_param = torch.tensor([[0, 0.021, 0.3], [np.pi / 2, 0.04, 0.3]])
+    obj_size = (0.1, 0.2)
     push_duration = 3
 
     # Get states
