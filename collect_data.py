@@ -3,15 +3,18 @@ from tqdm import tqdm
 from scipy.spatial.transform import Rotation as R
 
 from geometry.pose import euler_to_quat
-from ik import IK
+from grr_ik import IK
+from mink_ik import UR10IK
 from geometry.random_push import (
     get_random_push,
     generate_push_params,
     generate_path_form_params,
 )
 from geometry.object_model import get_obj_shape
+from utils import parse_args, set_seed
 
 from sim_network import SimClient
+import time
 
 
 def execute_push(client, ik, init_state, t_path, ws_path, dt):
@@ -28,7 +31,7 @@ def execute_push(client, ik, init_state, t_path, ws_path, dt):
     # Start execution
     client.execute("set_obj_init_poses", [init_state, 0])
     client.execute("reset")
-    poses = client.execute("execute_waypoints", [pos_waypoints, 1.0])
+    poses = client.execute("execute_waypoints", [pos_waypoints, 2.0])
     se2_pose = project_se3_pose(poses, axis=[0, 1, 0])
     return se2_pose
 
@@ -38,8 +41,9 @@ def collect_data(obj_name, n_data, random_init=True, push_params=None):
     # Need to run sim_network.py first
     # Sim class
     client = SimClient()
-    # IK solver - Expansion GRR
+    # IK solver
     ik = IK("ur10_rod")
+    # ik = UR10IK("assets/ur10_rod_ik.xml")
 
     # Initial state parameters
     n_envs, dt = client.execute("get_sim_info")
@@ -91,12 +95,12 @@ def collect_repetitive_data(obj_name, n_data, n_reps, random_init=True):
     """Collect n_reps * n_data for obj_name"""
     # Generate random push waypoints to repeat
     push_params = generate_push_params(n_data)
-    results_rep = np.zeros((n_reps, n_data, 3))
+    results_rep = np.zeros((n_data, n_reps, 3))
 
     # Start collecting
     for r in range(n_reps):
         _, results = collect_data(obj_name, n_data, random_init, push_params)
-        results_rep[r] = results
+        results_rep[:, r, :] = results
 
     return push_params, results_rep
 
@@ -139,14 +143,8 @@ def project_se3_pose(poses, axis=[0, 1, 0]):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("obj_name", nargs="?", default="cracker_box_flipped")
-    args = parser.parse_args()
-    seed = 42
-    np.random.seed(seed)
-    np.set_printoptions(precision=4, suppress=True)
+    args = parse_args([("obj_name", "cracker_box_flipped")])
+    set_seed(42)
 
     # Collect data
     n_data = 10000
@@ -155,19 +153,10 @@ if __name__ == "__main__":
     np.save(f"data/y_{args.obj_name}_{n_data}.npy", results)
 
     # Collect repetitive data
-    n_data = 1000
+    n_data = 2000
     n_reps = 10
     push_params, results = collect_repetitive_data(
         args.obj_name, n_data, n_reps
     )
     np.save(f"data/x_{args.obj_name}_{n_data}x{n_reps}.npy", push_params)
     np.save(f"data/y_{args.obj_name}_{n_data}x{n_reps}.npy", results)
-
-    # Collect repetitive data (testing)
-    n_data = 1000
-    n_reps = 10
-    push_params, results = collect_repetitive_data(
-        args.obj_name, n_data, n_reps
-    )
-    np.save(f"data/x_{args.obj_name}_test.npy", push_params)
-    np.save(f"data/y_{args.obj_name}_test.npy", results)

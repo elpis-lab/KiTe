@@ -4,13 +4,23 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 
-def push_physics(param, obj_size=(0.1, 0.1), k_steps=100, push_duration=3):
+def push_physics(
+    param, obj_size=(0.1, 0.1), relative=True, k_steps=100, push_duration=3
+):
     """Calculate the final state of the push given the param."""
     if isinstance(param, np.ndarray):
         param = torch.from_numpy(param)
 
     # Push parameters, Shape: (N, 1)
     rot, side, distance = param[:, 0:1], param[:, 1:2], param[:, 2:3]
+    # if input parameter is relative/normalized value
+    if relative:
+        # normalized rot values are (0, 0.25, 0.5, 1)
+        push_sides = torch.round(rot * 4)
+        rot = push_sides * (torch.pi / 2)
+        # scale the side to the object size
+        mask_odd = push_sides % 2 == 1
+        side = side * torch.where(mask_odd, obj_size[0], obj_size[1])
 
     # Get the velocity at time t, Shape: (K, )
     t = torch.linspace(0, push_duration, k_steps).to(param.device)
@@ -60,13 +70,13 @@ def progress_states(rot, side, velocities, accs, dt, obj_size=(0.1, 0.1)):
     # Adjust the push side dimensions
     # if push from right/left, then size_x is the width, size_y is the height
     # if push from top/bottom, then size_x is the height, size_y is the width
-    obj_size = torch.as_tensor(obj_size, device=rot.device)
-    obj_size = obj_size.unsqueeze(0).expand(rot.shape[0], 2)
-    obj_size_swapped = obj_size[:, [1, 0]]
+    size = torch.tensor(obj_size, device=rot.device, dtype=rot.dtype)
+    size = size.unsqueeze(0).expand(rot.shape[0], 2)
+    size_swapped = size[:, [1, 0]]
     swap_mask = (torch.abs(cos_rot) < 1e-3).expand(-1, 2)  # (N, 2)
-    obj_size = torch.where(swap_mask, obj_size_swapped, obj_size)
-    size_x = obj_size[:, 0].unsqueeze(1)
-    size_y = obj_size[:, 1].unsqueeze(1)
+    size = torch.where(swap_mask, size_swapped, size)
+    size_x = size[:, 0].unsqueeze(1)
+    size_y = size[:, 1].unsqueeze(1)
 
     # Push contact point
     x_c = size_x / 2

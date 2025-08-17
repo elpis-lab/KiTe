@@ -2,13 +2,12 @@
 set -euo pipefail
 
 # List of object names
+# mustard_bottle_flipped
+# letter_t
 # vehicle
 objs=(
     cracker_box_flipped
-    letter_t
     master_chef_can_flipped
-    mustard_bottle_flipped
-    banana
 )
 
 for obj in "${objs[@]}"; do
@@ -34,3 +33,6 @@ for obj in "${objs[@]}"; do
     echo "=== Done with $obj ==="
     echo
 done
+
+wait
+echo "=== All data collection jobs completed ==="

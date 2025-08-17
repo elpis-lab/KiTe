@@ -20,21 +20,18 @@ def get_random_push(
 ):
     """Get a random push parameter and the corresponding path"""
     push_params = generate_push_params(
-        n_params=n_params,
-        rotation_range=rotation_range,
-        side_range=side_range,
-        distance_range=distance_range,
+        n_params, rotation_range, side_range, distance_range
     )
     times, ws_paths = generate_path_form_params(
         obj_states,
         obj_shape,
         push_params,
-        tool_offset=tool_offset,
-        pre_push_offset=pre_push_offset,
-        duration=duration,
-        dt=dt,
-        max_speed=max_speed,
-        max_acc=max_acc,
+        tool_offset,
+        pre_push_offset,
+        duration,
+        dt,
+        max_speed,
+        max_acc,
     )
     return push_params, times, ws_paths
 

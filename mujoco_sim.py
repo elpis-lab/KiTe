@@ -19,7 +19,10 @@ class Sim:
         dt=0.1,
         visualize=True,
     ):
-        """Mujoco Simulation Environment
+        """
+        Mujoco Simulation Environment
+
+        This class is implemented in a parallel simulation manner.
 
         The simulation environment should have one robot and multiple objects.
         qpos is consisting of robot joint positions [:robot_dof]
@@ -174,21 +177,21 @@ class Sim:
 
     def move_ee(self, ee, env_idx=None, wait_time=0.0):
         """Set the robot end-effector positions"""
-        self._move_robot(self.robot_ee_idx, ee, env_idx, wait_time)
+        self._move_joint(self.robot_ee_idx, ee, env_idx, wait_time)
 
-    def move_joints(self, joints, env_idx=None, wait_time=0.0):
+    def move_arm(self, joints, env_idx=None, wait_time=0.0):
         """Set the robot joint positions"""
-        self._move_robot(self.robot_joint_idx, joints, env_idx, wait_time)
+        self._move_joint(self.robot_joint_idx, joints, env_idx, wait_time)
 
     def set_ee(self, ee, env_idx=None):
         """Set the robot end-effector positions"""
-        self._set_robot(self.robot_ee_idx, ee, env_idx)
+        self._set_joint(self.robot_ee_idx, ee, env_idx)
 
-    def set_joints(self, joints, env_idx=None):
+    def set_arm(self, joints, env_idx=None):
         """Set the robot joint positions"""
-        self._set_robot(self.robot_joint_idx, joints, env_idx)
+        self._set_joint(self.robot_joint_idx, joints, env_idx)
 
-    def _move_robot(self, joint_idxs, values, env_idx=None, wait_time=0.0):
+    def _move_joint(self, joint_idxs, values, env_idx=None, wait_time=0.0):
         """Move the robot joint positions"""
         values, env_idx = self._preprocess_values(values, env_idx)
         # Set the control
@@ -196,7 +199,7 @@ class Sim:
             self.mj_datas[env_idx[i]].ctrl[joint_idxs] = value
         self.run_sim(wait_time)
 
-    def _set_robot(self, joint_idxs, values, env_idx=None):
+    def _set_joint(self, joint_idxs, values, env_idx=None):
         """Set the robot joint positions"""
         values, env_idx = self._preprocess_values(values, env_idx)
         for i, value in enumerate(values):
@@ -240,7 +243,7 @@ class Sim:
                 intermediate_qpos[step_i, env_i] = mj_data.qpos
 
         # Start execution
-        self.set_joints(waypoints[0], env_idx)
+        self.set_arm(waypoints[0], env_idx)
         # Run the sim with the computed trajectory
         self.step_n(n_run_steps, thread_fn=thread_fn)
 
@@ -329,7 +332,7 @@ def test(sim: Sim):
 
     # Test control
     ctrl = np.array([-1.5, -1.5, 1.5, -1.5, -1.5, 0])
-    sim.move_joints(ctrl, wait_time=1.0)
+    sim.move_arm(ctrl, wait_time=1.0)
 
     # Test waypoints
     waypoints = np.linspace(ctrl - 0.5, ctrl + 0.5, 30)
@@ -349,6 +352,7 @@ def test(sim: Sim):
     print(sim.get_robot_joints()[0], sim.get_robot_joints().shape)
     print(sim.get_obj_pose()[0], sim.get_obj_pose().shape)
 
+    input("Test done")
     sim.close()
 
 

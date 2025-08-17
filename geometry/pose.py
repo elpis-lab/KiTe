@@ -256,8 +256,7 @@ def quat_to_matrix(quat: np.ndarray) -> np.ndarray:
 
 def flat_to_matrix(flat: np.ndarray) -> np.ndarray:
     """Convert a flat 7D array to a 4x4 homogeneous matrix"""
-    if flat.ndim == 1:
-        flat = flat[None, :]
+    flat = np.atleast_2d(flat)
     # Convert to matrices
     positions = flat[:, :3]
     rotations = quat_to_matrix(flat[:, 3:])
@@ -279,3 +278,9 @@ def wxyz_to_xyzw(quat: np.ndarray) -> np.ndarray:
 def xyzw_to_wxyz(quat: np.ndarray) -> np.ndarray:
     """Quaternion (x, y, z, w) to (w, x, y, z)"""
     return np.roll(quat, shift=1, axis=-1)
+
+
+# Some other utils
+def angle_diff(a: float, b: float) -> float:
+    """Compute the signed angle difference between two angles"""
+    return (a - b + np.pi) % (2 * np.pi) - np.pi

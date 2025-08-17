@@ -7,6 +7,8 @@ import traceback
 # from mjx_sim import Sim
 from mujoco_sim import Sim
 
+from utils import parse_args
+
 PORT = 8888
 
 
@@ -212,14 +214,9 @@ def deserialize_data(data):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("obj_name", nargs="?", default="cracker_box_flipped")
-    args = parser.parse_args()
-    seed = 42
-    np.random.seed(seed)
     np.set_printoptions(precision=4, suppress=True)
+
+    args = parse_args([("obj_name", "cracker_box_flipped")])
 
     # Initialize simulation
     xml = open("mujoco_sim.xml").read()
@@ -230,7 +227,7 @@ if __name__ == "__main__":
         robot_joint_dof=6,
         robot_ee_dof=0,
         dt=0.02,
-        visualize=True,
+        visualize=True,  # True
     )
     server = SimServer(sim)
     server.run_server()
