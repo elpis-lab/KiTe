@@ -3,7 +3,7 @@ import time
 import numpy as np
 
 
-class Camera6D:
+class Camera:
     def __init__(self, camera_ip="192.168.0.101", camera_port=5000):
         """Initialize with the camera IP address and port"""
         self.server_url = f"http://{camera_ip}:{camera_port}"
@@ -23,6 +23,8 @@ class Camera6D:
             return False
 
     def setup_socketio_handlers(self):
+        """Setup socketio handlers"""
+
         @self.sio.on("result")
         def on_pose(data):
             obj_name = data.get("object_name", None)
@@ -44,9 +46,15 @@ class Camera6D:
             numpy.ndarray: [x, y, theta] if object is detected, None otherwise
         """
         # Request new data
+        self.latest_data = None
         self.sio.emit("get_result")
-        # Give some time for the server to respond
-        time.sleep(0.5)
+        # Wait for the server to respond
+        start_time = time.time()
+        while time.time() - start_time < 5.0:
+            if self.latest_data is not None:
+                print(f"Time taken: {time.time() - start_time}")
+                break
+            time.sleep(0.05)  # check every 50ms
         return self.latest_data
 
 
