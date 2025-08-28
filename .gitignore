@@ -17,6 +17,5 @@ results/
 *.npy
 
 # Test
+debug/
 test/
-*pool.sh
-*pool.py

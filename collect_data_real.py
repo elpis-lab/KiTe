@@ -210,7 +210,7 @@ def main(obj_name, n_data, n_reps=0, detection_wait=0.0):
 
     # Vision system check
     rough_detect_pose = np.array([*center, 0.6, 0, np.pi, 0])
-    obj_pose, _ = vision_check(robot, rough_detect_pose, height=0.08)
+    obj_pose, _ = vision_check(robot, rough_detect_pose, height=0.15)
     input("Center of The Object?")
 
     # Data collection setup, always load the existing data
@@ -301,5 +301,5 @@ if __name__ == "__main__":
 
     main(args.obj_name, args.num_data, args.n_reps, args.detection_wait)
 
-    # Run this in the end of repetitive data collection
-    organize_data(args.obj_name, args.n_reps, args.num_data)
+    # # Run this in the end of repetitive data collection
+    # organize_data(args.obj_name, args.n_reps, args.num_data)
