@@ -256,7 +256,12 @@ def quat_to_matrix(quat: np.ndarray) -> np.ndarray:
 
 def flat_to_matrix(flat: np.ndarray) -> np.ndarray:
     """Convert a flat 7D array to a 4x4 homogeneous matrix"""
-    flat = np.atleast_2d(flat)
+    flat = np.array(flat)
+    single = False
+    if flat.ndim == 1:
+        flat = flat[None, :]
+        single = True
+
     # Convert to matrices
     positions = flat[:, :3]
     rotations = quat_to_matrix(flat[:, 3:])
@@ -264,9 +269,27 @@ def flat_to_matrix(flat: np.ndarray) -> np.ndarray:
     matrices[:, :3, 3] = positions
     matrices[:, :3, :3] = rotations
 
-    if flat.shape[0] == 1:
+    if single:
         return matrices[0]
     return matrices
+
+
+def matrix_to_flat(matrix: np.ndarray) -> np.ndarray:
+    """Convert a 4x4 homogeneous matrix to a flat 7D array"""
+    matrix = np.array(matrix)
+    single = False
+    if matrix.ndim == 2:
+        matrix = matrix[None, :, :]
+        single = True
+
+    # Convert to flat
+    positions = matrix[:, :3, 3]
+    rotations = matrix_to_quat(matrix[:, :3, :3])
+    flat = np.concatenate([positions, rotations], axis=-1)
+
+    if single:
+        return flat[0]
+    return flat
 
 
 # Utils for quaternion format conversion between scipy and genesis

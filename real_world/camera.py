@@ -1,3 +1,6 @@
+import io
+import base64
+from PIL import Image
 import socketio
 import time
 import numpy as np
@@ -30,11 +33,16 @@ class Camera:
             obj_name = data.get("object_name", None)
             pose = data.get("pose", None)
             bounding_box = data.get("bounding_box", None)
+            img = data.get("result_image", None)
+            if img is not None:
+                img_bytes = base64.b64decode(img)
+                img = Image.open(io.BytesIO(img_bytes))
             if pose is not None:
                 self.latest_data = {
                     "object_name": obj_name,
-                    "pose": pose,
-                    "bounding_box": bounding_box,
+                    "pose": np.array(pose),
+                    "bounding_box": np.array(bounding_box),
+                    "result_image": img,
                 }
             else:
                 self.latest_data = None
@@ -47,12 +55,13 @@ class Camera:
         """
         # Request new data
         self.latest_data = None
-        self.sio.emit("get_result")
+        # self.sio.emit("get_result")
+        self.sio.emit("get_result_with_vis")
         # Wait for the server to respond
         start_time = time.time()
         while time.time() - start_time < 5.0:
             if self.latest_data is not None:
-                print(f"Time taken: {time.time() - start_time}")
+                # print(f"Time taken: {time.time() - start_time}")
                 break
             time.sleep(0.05)  # check every 50ms
         return self.latest_data

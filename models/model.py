@@ -49,10 +49,10 @@ class TorchModel:
         x_tensor = torch.as_tensor(x, dtype=torch.float32, device=self.device)
         y_tensor = torch.as_tensor(y, dtype=torch.float32, device=self.device)
         dataset = TensorDataset(x_tensor, y_tensor)
-        dataloader = DataLoader(dataset, batch_size=self.batch_size)
+        dataloader = DataLoader(dataset, self.batch_size, shuffle=True)
         optimizer = self.optimizer(self.model.parameters(), lr=self.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, "min", patience=100, factor=0.1
+            optimizer, "min", patience=20, factor=0.5
         )
 
         # initialize tracking

@@ -13,7 +13,7 @@ def get_random_push(
     side_range: tuple[float, float] = (-0.4, 0.4),  # relative side offset
     distance_range: tuple[float, float] = (0, 0.3),  # push distance
     pre_push_offset: float = 0.02,  # pre-push offset at the beginning
-    duration: float = 3,  # total time to complete the push
+    duration: float = 2,  # total time to complete the push
     dt: float = 0.1,  # time step of the path
     max_speed: float = 0.5,  # assume it will never exceed this speed
     max_acc: float = 1,  # assume it will never exceed this acceleration
@@ -66,7 +66,7 @@ def generate_path_form_params(
     push_params: np.ndarray,
     tool_offset: np.ndarray = np.array([0, 0, 0, 1, 0, 0, 0]),
     pre_push_offset: float = 0.02,
-    duration: float = 3,
+    duration: float = 2,
     dt: float = 0.1,
     max_speed: float = 0.5,
     max_acc: float = 1,
@@ -127,7 +127,7 @@ def generate_path_form_params(
     # Transform matrix will be size (n_data, n_steps, 4, 4)
     # add reflection and offset - ensure ee pointing down
     t_rotate_z = np.tile(np.eye(4)[None, None, :, :], (n_data, 1, 1, 1))
-    t_rotate_z[:, 0, :3, :3] = euler_to_matrix("z", rotations)
+    t_rotate_z[:, 0, :3, :3] = euler_to_matrix("z", rotations + np.pi)
     t_reflect_z = np.eye(4)[None, None, :, :]
     t_reflect_z[0, 0, :3, :3] = euler_to_matrix("x", np.pi)
     t_tool_offset = flat_to_matrix(tool_offset)[None, None, :, :]

@@ -17,6 +17,8 @@ def generate_initial_states(n_states):
 def run_planning(
     obj_name,
     model_type,
+    use_var,
+    data_usage,
     belief,
     sampling,
     selection,
@@ -32,8 +34,6 @@ def run_planning(
     control_bounds = ((0, 4), (-0.4, 0.4), (0.0, 0.3))
 
     # Load dynamics model
-    use_var = 2
-    data_usage = "1000x1"
     obj_shape = get_obj_shape(f"assets/{obj_name}/textured.obj")
     equation = get_push_physics(model_type, obj_shape)
     model = load_model(model_type, equation, use_var)
@@ -86,8 +86,12 @@ if __name__ == "__main__":
 
     args = parse_args(
         [
+            # Model
             ("obj_name", "master_chef_can_flipped"),
             ("model_type", "mlp"),
+            ("use_var", 2, float),
+            ("data_usage", "1000x1"),
+            # Planning
             ("belief_space", 1, int),
             ("active_sampling", 1, int),
             ("active_selection", 1, int),
@@ -109,6 +113,8 @@ if __name__ == "__main__":
     all_states, all_controls = run_planning(
         args.obj_name,
         args.model_type,
+        args.use_var,
+        args.data_usage,
         args.belief_space,
         args.active_sampling,
         args.active_selection,
@@ -121,6 +127,9 @@ if __name__ == "__main__":
     belief = "belief" if args.belief_space else "regular"
     sampling = "active" if args.active_sampling else "random"
     selection = "prob" if args.active_selection else "cost"
-    name = f"{args.obj_name}_{args.model_type}_{belief}_{sampling}_{selection}"
+    name = (
+        f"{args.obj_name}_{args.model_type}_{args.use_var}_{args.data_usage}"
+        + f"_{belief}_{sampling}_{selection}"
+    )
     np.save(f"results/planning/{name}_states.npy", all_states)
     np.save(f"results/planning/{name}_controls.npy", all_controls)

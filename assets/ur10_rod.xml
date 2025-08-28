@@ -11,11 +11,11 @@
 
       <default class="size4">
         <joint damping="10"/>
-        <position forcerange="-330 330" kp="17000" kv="1700"/>
+        <position forcerange="-330 330"/>
       </default>
       <default class="size3">
         <joint damping="5"/>
-        <position forcerange="-150 150" kp="14000" kv="1400"/>
+        <position forcerange="-150 150"/>
         <default class="size3_limited">
           <joint range="-3.1415 3.1415"/>
           <position ctrlrange="-3.1415 3.1415"/>
@@ -23,7 +23,7 @@
       </default>
       <default class="size2">
         <joint damping="2"/>
-        <position forcerange="-56 56" kp="9000" kv="900"/>
+        <position forcerange="-56 56"/>
       </default>
 
       <default class="visual">
@@ -34,7 +34,7 @@
         <geom type="capsule" condim="3" contype="1" conaffinity="1" group="3"/>
       </default>
 
-      <site size="0.001" rgba="0.5 0.5 0.5 0.3" group="3"/>
+      <site size="0.01" rgba="1.0 0.5 0.0 0.5" group="3"/>
     </default>
   </default>
 
@@ -78,36 +78,36 @@
         <inertial pos="0 0 0" mass="7.778" diaginertia="0.0314743 0.0314743 0.0218756"/>
         <joint name="shoulder_pan_joint" class="size4" axis="0 0 1"/>
         <geom mesh="shoulder" material="shoulder_visual" class="visual"/>
-        <geom class="collision" size="0.078 0.035" pos="0 0 -0.01"/>
+        <geom name="shoulder_collision" class="collision" size="0.078 0.035" pos="0 0 -0.01"/>
 
         <body name="upperarm_link" pos="0 0.220941 0" quat="1 0 1 0">
           <inertial pos="0 0 0.3065" mass="12.93" diaginertia="0.421754 0.421754 0.0363656"/>
           <joint name="shoulder_lift_joint" class="size4"/>
           <geom mesh="upperarm" material="upperarm_visual" class="visual"/>
-          <geom class="collision" pos="0 -0.1 0" quat="1 1 0 0" size="0.078 0.08"/>
-          <geom class="collision" size="0.055 0.3" pos="0 -0.045 0.3"/>
+          <geom name="upperarm_collision_0" class="collision" pos="0 -0.1 0" quat="1 1 0 0" size="0.078 0.08"/>
+          <geom name="upperarm_collision_1" class="collision" size="0.055 0.3" pos="0 -0.045 0.3"/>
 
           <body name="forearm_link" pos="0 -0.1719 0.612">
             <inertial pos="0 0 0.28615" mass="3.87" diaginertia="0.11107 0.11107 0.0108844"/>
             <joint name="elbow_joint" class="size3_limited"/>
             <geom mesh="forearm" material="forearm_visual" class="visual"/>
-            <geom class="collision" pos="0 0.065 0" quat="1 1 0 0" size="0.058 0.085"/>
-            <geom class="collision" size="0.045 0.28" pos="0 -0.001 0.29"/>
+            <geom name="forearm_collision_0" class="collision" pos="0 0.065 0" quat="1 1 0 0" size="0.058 0.085"/>
+            <geom name="forearm_collision_1" class="collision" size="0.045 0.28" pos="0 -0.001 0.29"/>
 
             <body name="wrist_1_link" pos="0 0 0.5723" quat="1 0 1 0">
               <inertial pos="0 0.1149 0" quat="0.5 0.5 -0.5 0.5" mass="1.96"
                 diaginertia="0.00551245 0.0051082 0.0051082"/>
               <joint name="wrist_1_joint" class="size2"/>
               <geom mesh="wrist1" material="wrist1_visual" class="visual"/>
-              <geom class="collision" pos="0 0.045 0" quat="1 1 0 0" size="0.05 0.06"/>
+              <geom name="wrist_1_collision" class="collision" pos="0 0.045 0" quat="1 1 0 0" size="0.05 0.06"/>
 
               <body name="wrist_2_link" pos="0 0.1149 0">
                 <inertial pos="0 0 0.1157" quat="0.5 0.5 -0.5 0.5" mass="1.96"
                   diaginertia="0.00551245 0.0051082 0.0051082"/>
                 <joint name="wrist_2_joint" axis="0 0 1" class="size2"/>
                 <geom mesh="wrist2" material="wrist2_visual" class="visual"/>
-                <geom class="collision" size="0.046 0.065" pos="0 -0.001 0.045"/>
-                <geom class="collision" pos="0 0.022 0.116" quat="1 1 0 0" size="0.046 0.03"/>
+                <geom name="wrist_2_collision_0" class="collision" size="0.046 0.065" pos="0 -0.001 0.045"/>
+                <geom name="wrist_2_collision_1" class="collision" pos="0 0.022 0.116" quat="1 1 0 0" size="0.046 0.03"/>
 
                 <body name="wrist_3_link" pos="0 0 0.1157">
                   <inertial pos="0.07695 0 0" quat="0 1 -1 0" mass="0.202"
@@ -118,7 +118,8 @@
                   <body name="rod" pos="0 0.2222 0" quat="1 -1 0 0">
                     <inertial pos="0 0 0" mass="0.1" diaginertia="0.001 0.001 0.001"/>
                     <geom type="capsule" size="0.01 0.12" material="gold" class="visual"/>
-                    <geom class="collision" size="0.01 0.12" contype="1" conaffinity="1"/>
+                    <geom name="rod_collision" class="collision" size="0.01 0.12" contype="1" conaffinity="1"/>
+                    <site name="attachment_site" pos="0 0 0.13" rgba="1 0 0 0" group="1"/>
                   </body>
                 </body>
               </body>

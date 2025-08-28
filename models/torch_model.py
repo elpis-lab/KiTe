@@ -19,9 +19,8 @@ class MLP(nn.Module):
 
         self.in_net = self.block(in_dim, hidden_dim, dropout=0)
         self.block1 = self.block(hidden_dim, 2 * hidden_dim, dropout)
-        self.block2 = self.block(2 * hidden_dim, 4 * hidden_dim, dropout)
-        self.block3 = self.block(4 * hidden_dim, 2 * hidden_dim, dropout)
-        self.block4 = self.block(2 * hidden_dim, hidden_dim, dropout=0)
+        self.block2 = self.block(2 * hidden_dim, 2 * hidden_dim, dropout)
+        self.block3 = self.block(2 * hidden_dim, hidden_dim, dropout)
         self.out_net = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.LeakyReLU(),
@@ -49,7 +48,6 @@ class MLP(nn.Module):
         x = self.block1(x)
         x = self.block2(x)
         x = self.block3(x)
-        x = self.block4(x)
         return x
 
     def forward(self, x):
@@ -108,7 +106,6 @@ class MLPEvidential(MLP):
     def forward(self, x):
         """Forward pass, return pred with logvar."""
         x = self.layers(x)
-        pred = self.out_net(x)
 
         # Uncertainty
         gamma = self.gamma_net(x)  # E[µ]

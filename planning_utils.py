@@ -291,6 +291,7 @@ class ControlBatchSampler(oc.ControlSampler):
         self.cache_idx = 0
         self.controls = []
         self.d_states = []
+        self.total_var = []
         self.sample_cache()
 
     def sample_cache(self):
@@ -315,6 +316,7 @@ class ControlBatchSampler(oc.ControlSampler):
         # Predict the control effect (in mini-batch)
         batch_size = 2000
         self.d_states = np.zeros((self.cache_size, self.s_dim))
+        self.total_var = np.zeros(self.cache_size)
         for i in range(0, self.cache_size, batch_size):
             i_l, i_h = i, i + batch_size
 
@@ -327,10 +329,16 @@ class ControlBatchSampler(oc.ControlSampler):
             elif pred.shape[1] == 2 * 3:
                 variances = np.exp(pred[:, 3:])
                 self.d_states[i_l:i_h, [3, 6, 8]] = variances
+                self.total_var[i_l:i_h] = np.sum(variances, axis=1)
             elif pred.shape[1] == 4 * 3:
                 nu, alpha, beta = pred[:, 3:6], pred[:, 6:9], pred[:, 9:]
-                variances = beta / (nu * (alpha - 1.0))
+                # Original std
+                # variances = beta / (nu * (alpha - 1.0))
+                # Better aleatoric Proxy
+                variances = beta * (1 + nu) / (alpha * nu)
                 self.d_states[i_l:i_h, [3, 6, 8]] = variances
+                epistemic = 1 / nu
+                self.total_var[i_l:i_h] = np.sum(epistemic, axis=1)
             else:
                 raise ValueError(
                     f"Invalid model prediction dimension: {pred.shape[1]}"
@@ -397,19 +405,17 @@ class ActiveBatchControlSampler(ControlBatchSampler):
         # a list of control pools instead single control
         self.controls = self.controls.reshape(self.n_pool, self.pool_size, -1)
         self.d_states = self.d_states.reshape(self.n_pool, self.pool_size, -1)
-
-        # Variance is stored in the last 6 elements of d_states
-        variances = np.sum(self.d_states[:, :, 3:], axis=2)
+        self.total_var = self.total_var.reshape(self.n_pool, self.pool_size)
 
         # Option 1 - Given the variances, assign weights to each control
-        weights = 1.0 / (variances + 1e-6)
+        weights = 1.0 / (self.total_var + 1e-6)
         weights = weights / weights.sum(axis=1, keepdims=True)
         # Sample from the pool with the weights
         u = np.random.uniform(size=self.n_pool)
         cdf = np.cumsum(weights, axis=1)
         indices = (u[:, None] <= cdf).argmax(axis=1)
         # Option 2 - Simply choose the control with the lowest variance
-        # indices = np.argmin(variances, axis=1)
+        # indices = np.argmin(self.total_var, axis=1)
 
         # Select the best control and corresponding delta state
         rows = np.arange(self.n_pool)

@@ -74,7 +74,13 @@ def evidential_se2_loss(y_pred, y_true, lambda_reg=0.01):
 
     # NIG Regularization
     evidence = 2 * nu + alpha
-    reg = torch.abs(delta_err) * evidence
+    # Original Regularization
+    # reg = torch.abs(delta_err) * evidence
+    # Normalized Regularization
+    # https://arxiv.org/pdf/2205.10060
+    wst = torch.sqrt(beta * (1 + nu) / alpha / nu + 1e-8)
+    z = torch.pow(torch.abs(delta_err) / wst, 2)
+    reg = z * evidence
     reg = torch.mean(reg)
 
     # Total Loss
@@ -247,9 +253,14 @@ def evidential_loss(y_pred, y_true, lambda_reg=0.01):
 
     # NIG Regularization
     evidence = 2 * nu + alpha
+    # Original Regularization
     reg = torch.abs(y_true - gamma) * evidence
+    # Normalized Regularization
+    # https://arxiv.org/pdf/2205.10060
+    # wst = torch.sqrt(beta * (1 + nu) / alpha / nu + 1e-8)
+    # z = torch.pow(torch.abs(y_true - gamma) / wst, 2)
+    # reg = z * evidence
     reg = torch.mean(reg)
 
-    # Total Loss
     loss = nll + lambda_reg * reg
     return loss

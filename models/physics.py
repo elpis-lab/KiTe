@@ -5,7 +5,7 @@ import matplotlib.patches as patches
 
 
 def push_physics(
-    param, obj_size=(0.1, 0.1), relative=True, k_steps=100, push_duration=3
+    param, obj_size=(0.1, 0.1), relative=True, k_steps=100, push_duration=2
 ):
     """Calculate the final state of the push given the param."""
     if isinstance(param, np.ndarray):
@@ -241,7 +241,7 @@ if __name__ == "__main__":
     # Set up an example push
     push_param = torch.tensor([[0, 0.021, 0.3], [np.pi / 2, 0.04, 0.3]])
     obj_size = (0.1, 0.2)
-    push_duration = 3
+    push_duration = 2
 
     # Get states
     rot, side, distance = (

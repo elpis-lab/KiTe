@@ -2,12 +2,16 @@
 set -euo pipefail
 
 # List of object names
+# cracker_box_flipped
+# master_chef_can_flipped
 # mustard_bottle_flipped
 # letter_t
-# vehicle
+# toy_vehicle
 objs=(
-    cracker_box_flipped
-    master_chef_can_flipped
+    mustard_bottle_flipped
+    banana
+    letter_t
+    toy_vehicle
 )
 
 for obj in "${objs[@]}"; do

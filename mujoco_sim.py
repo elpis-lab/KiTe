@@ -327,8 +327,12 @@ def test(sim: Sim):
     sim.set_robot_init_joints(
         np.array([np.pi / 2, -1.7, 2, -1.87, -np.pi / 2, np.pi])
     )
+    sim.set_robot_init_joints(
+        np.array([1.620, -2.480, 2.265, -1.350, -1.575, 0.0])
+    )
     sim.set_obj_init_poses(np.array([0, -0.7, 0, 1, 0, 0, 0]), 0)
     sim.reset()
+    input()
 
     # Test control
     ctrl = np.array([-1.5, -1.5, 1.5, -1.5, -1.5, 0])

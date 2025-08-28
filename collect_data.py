@@ -123,6 +123,12 @@ def get_random_se2_states(
 
 def project_se3_pose(poses, axis=[0, 1, 0]):
     """Project SE3 pose to SE2"""
+    poses = np.array(poses)
+    single = False
+    if poses.ndim == 1:
+        poses = poses[None, :]
+        single = True
+
     # Position
     xy = poses[:, :2]
     # Rotation
@@ -137,9 +143,11 @@ def project_se3_pose(poses, axis=[0, 1, 0]):
     cross_zs = axis0[:, 0] * axis1[:, 1] - axis0[:, 1] * axis1[:, 0]
     # signed angle = atan2(sin, cos)
     yaw = np.arctan2(cross_zs, dots)[:, None]
+    se2_poses = np.concatenate([xy, yaw], axis=-1)
 
-    se2_pose = np.concatenate([xy, yaw], axis=-1)
-    return se2_pose
+    if single:
+        return se2_poses[0]
+    return se2_poses
 
 
 if __name__ == "__main__":
@@ -153,7 +161,7 @@ if __name__ == "__main__":
     np.save(f"data/y_{args.obj_name}_{n_data}.npy", results)
 
     # Collect repetitive data
-    n_data = 2000
+    n_data = 1000
     n_reps = 10
     push_params, results = collect_repetitive_data(
         args.obj_name, n_data, n_reps

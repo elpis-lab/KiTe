@@ -17,14 +17,14 @@ class PhysicalUR10:
         self.hand_cam = Camera("192.168.0.101", "5000")
 
     # Joint control
-    def execute_trajectory(self, waypoints, d_t: float = 0.008):
+    def execute_trajectory(self, waypoints, d_t: float = 0.008, **kwargs):
         """Execute a trajectory"""
         # speed_list = []
 
         # Execute each waypoint
         for waypoint in waypoints:
             start_t = self.rtde.rtde_c.initPeriod()
-            self.rtde.servo_joint(waypoint, time=d_t)
+            self.rtde.servo_joint(waypoint, time=d_t, **kwargs)
             self.rtde.rtde_c.waitPeriod(start_t)
             # speed_list.append(self.get_ee_speed())
 
@@ -39,7 +39,8 @@ class PhysicalUR10:
         self,
         waypoints: list[list[float]],
         d_t: float = 0.008,
-        to_rotvec: bool = True,
+        to_rotvec: bool = False,
+        **kwargs,
     ):
         """Execute a trajectory"""
         # Convert waypoints to rotation vector pose
@@ -50,7 +51,7 @@ class PhysicalUR10:
         # Execute each waypoint
         for waypoint in waypoints:
             start_t = self.rtde.rtde_c.initPeriod()
-            self.rtde.servo_tool(waypoint, time=d_t)
+            self.rtde.servo_tool(waypoint, time=d_t, **kwargs)
             self.rtde.rtde_c.waitPeriod(start_t)
             # speed_list.append(self.get_ee_speed())
 
@@ -61,15 +62,17 @@ class PhysicalUR10:
         # plt.plot(speed_list)
         # plt.show()
 
-    def move_joint(self, joint_angles: list[float]):
+    def move_joint(self, joint_angles: list[float], **kwargs):
         """Move the robot to a joint configuration"""
-        self.rtde.move_joint(joint_angles)
+        self.rtde.move_joint(joint_angles, **kwargs)
 
-    def move_tool(self, tool_pose: list[float], to_rotvec: bool = True):
+    def move_tool(
+        self, tool_pose: list[float], to_rotvec: bool = False, **kwargs
+    ):
         """Move the robot to a tool pose"""
         if to_rotvec:
             tool_pose = self._quat_to_rotvec_pose(tool_pose)
-        self.rtde.move_tool(tool_pose)
+        self.rtde.move_tool(tool_pose, **kwargs)
 
     def _quat_to_rotvec_pose(self, quat_pose: list[float]):
         """Convert a quaternion pose to a rotation vector pose"""
