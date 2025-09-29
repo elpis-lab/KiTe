@@ -35,8 +35,12 @@ class Camera:
             bounding_box = data.get("bounding_box", None)
             img = data.get("result_image", None)
             if img is not None:
-                img_bytes = base64.b64decode(img)
-                img = Image.open(io.BytesIO(img_bytes))
+                try:
+                    img_bytes = base64.b64decode(img)
+                    img = Image.open(io.BytesIO(img_bytes))
+                except Exception as e:
+                    print(f"Error decoding image: {e}")
+                    img = None
             if pose is not None:
                 self.latest_data = {
                     "object_name": obj_name,
@@ -55,8 +59,8 @@ class Camera:
         """
         # Request new data
         self.latest_data = None
-        # self.sio.emit("get_result")
         self.sio.emit("get_result_with_vis")
+        # self.sio.emit("get_result")
         # Wait for the server to respond
         start_time = time.time()
         while time.time() - start_time < 5.0:
