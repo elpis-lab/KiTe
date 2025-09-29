@@ -28,6 +28,7 @@ class Pose:
             euler = rotation
             rotation = euler_to_quat(euler)
         elif len(rotation) == 4:
+            rotation = rotation / np.linalg.norm(rotation)
             euler = quat_to_euler(rotation)
         else:
             raise ValueError(f"Invalid rotation: {rotation}")
@@ -36,17 +37,21 @@ class Pose:
         self.rotation = rotation
         self.euler = euler
 
-    @property
-    def pr(self) -> tuple[np.ndarray, np.ndarray]:
+    def pr(self, i: int | None = None) -> tuple[np.ndarray, np.ndarray]:
         """Return position and rotation in a tuple"""
-        return self.position, self.rotation
+        if i is None:
+            return self.position, self.rotation
+        elif i == 0:
+            return self.position
+        elif i == 1:
+            return self.rotation
+        else:
+            raise ValueError(f"Valid index: None, 0, 1, but got {i}")
 
-    @property
     def flat(self) -> np.ndarray:
         """Return position and rotation in a flat array"""
-        return np.concatenate([*self.pr])
+        return np.concatenate([*self.pr()])
 
-    @property
     def invert(self) -> Pose:
         """
         Invert a transform with `position` and `rotation` (w,x,y,z).
@@ -58,7 +63,6 @@ class Pose:
         q_inv = xyzw_to_wxyz(r_inv.as_quat())
         return Pose(p_inv, q_inv)
 
-    @property
     def matrix(self) -> np.ndarray:
         """Return the 4x4 homogeneous matrix representation of the pose"""
         r = R.from_quat(wxyz_to_xyzw(self.rotation))
@@ -89,8 +93,8 @@ class Pose:
 
     def same(self, other: Pose, threshold: float = 1e-3) -> float:
         """Check if two poses are the same"""
-        ap, ao = self.pr
-        bp, bo = other.pr
+        ap, ao = self.pr()
+        bp, bo = other.pr()
         # position should be close
         # rotation should be close to other's quat or -quat
         pos_close = np.allclose(ap, bp, atol=threshold)
@@ -104,8 +108,8 @@ class Pose:
         Compute the distance between two poses.
         Return position and rotation distance.
         """
-        ap, ao = self.pr
-        bp, bo = other.pr
+        ap, ao = self.pr()
+        bp, bo = other.pr()
         # position distance (m)
         dp = np.linalg.norm(ap - bp)
         # rotation distance (rad)
@@ -154,7 +158,7 @@ class SE2Pose(Pose):
         rotation: float = 0,
     ):
         """Initialize with position (x, y) and rotation theta"""
-        position, euler = self.to_se3(position, rotation)
+        position, euler = self.to_se3(position, wrap_to_pi(rotation))
         super().__init__(position, euler)
 
     def to_se2(
@@ -173,26 +177,22 @@ class SE2Pose(Pose):
         euler = np.array([0.0, 0.0, euler])
         return position, euler
 
-    @property
     def pr(self) -> tuple[np.ndarray, np.ndarray]:
         """Return position and rotation in a tuple"""
         position, euler = self.to_se2(self.position, self.euler)
         return position, euler
 
-    @property
     def flat(self) -> np.ndarray:
         """Return position and rotation in a flat array"""
-        position, euler = self.pr
+        position, euler = self.pr()
         return np.array([position[0], position[1], euler])
 
-    @property
     def invert(self) -> SE2Pose:
         """Invert a SE2 pose"""
-        inverted = super().invert
+        inverted = super().invert()
         position, euler = self.to_se2(inverted.position, inverted.euler)
         return SE2Pose(position, euler)
 
-    @property
     def matrix(self) -> np.ndarray:
         """Return the 3x3 homogeneous matrix representation of the pose"""
         position, euler = self.to_se2(self.position, self.euler)
@@ -215,7 +215,7 @@ class SE2Pose(Pose):
 
     def copy(self) -> SE2Pose:
         """Copy a pose"""
-        return SE2Pose(*self.pr)
+        return SE2Pose(*self.pr())
 
     def __repr__(self) -> str:
         """Return a string representation of the pose"""
@@ -257,10 +257,9 @@ def quat_to_matrix(quat: np.ndarray) -> np.ndarray:
 def flat_to_matrix(flat: np.ndarray) -> np.ndarray:
     """Convert a flat 7D array to a 4x4 homogeneous matrix"""
     flat = np.array(flat)
-    single = False
-    if flat.ndim == 1:
+    single = flat.ndim == 1
+    if single:
         flat = flat[None, :]
-        single = True
 
     # Convert to matrices
     positions = flat[:, :3]
@@ -277,10 +276,9 @@ def flat_to_matrix(flat: np.ndarray) -> np.ndarray:
 def matrix_to_flat(matrix: np.ndarray) -> np.ndarray:
     """Convert a 4x4 homogeneous matrix to a flat 7D array"""
     matrix = np.array(matrix)
-    single = False
-    if matrix.ndim == 2:
+    single = matrix.ndim == 2
+    if single:
         matrix = matrix[None, :, :]
-        single = True
 
     # Convert to flat
     positions = matrix[:, :3, 3]
@@ -307,3 +305,8 @@ def xyzw_to_wxyz(quat: np.ndarray) -> np.ndarray:
 def angle_diff(a: float, b: float) -> float:
     """Compute the signed angle difference between two angles"""
     return (a - b + np.pi) % (2 * np.pi) - np.pi
+
+
+def wrap_to_pi(angle: float) -> float:
+    """Wrap an angle to the range [-pi, pi]"""
+    return (angle + np.pi) % (2 * np.pi) - np.pi
