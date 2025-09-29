@@ -1,3 +1,6 @@
+import os, sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import time
 
@@ -5,8 +8,8 @@ import mujoco
 import mujoco.viewer
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from mujoco_utils import render_mp4
-from geometry.pose import Pose
+from simulation.mujoco_utils import flat_to_matrix, matrix_to_flat
+from simulation.mujoco_utils import render_mp4
 
 
 class Sim:
@@ -18,6 +21,7 @@ class Sim:
         robot_ee_dof,
         dt=0.1,
         visualize=True,
+        real_time_vis=False,
     ):
         """
         Mujoco Simulation Environment
@@ -40,6 +44,7 @@ class Sim:
                 self.mj_model, self.mj_data
             )
             self.viewer.sync()
+        self.real_time_vis = real_time_vis
 
         # Simulation parameters
         # qpos idx
@@ -50,7 +55,17 @@ class Sim:
             robot_joint_dof, robot_joint_dof + robot_ee_dof
         )
         obj_idx = np.arange(robot_joint_dof + robot_ee_dof, self.mj_model.nq)
-        self.obj_idxs = obj_idx.reshape(-1, 7)
+        # TODO, for now it only supports
+        # multiple objects with 7DOF or
+        # 1 object with any DOF (assume first 7DOF is the object pose)
+        if obj_idx.size % 7 == 0:
+            self.obj_idxs = obj_idx.reshape(-1, 7)
+        else:
+            print(
+                "Warning: The first object has more than 7DOF. "
+                + "The other objects will be ignored in computation."
+            )
+            self.obj_idxs = obj_idx[None, :7]
         # time
         self.dt = dt
         time_step = self.mj_model.opt.timestep
@@ -149,7 +164,9 @@ class Sim:
 
     def get_obj_pose(self, obj_idx=0, env_idx=None):
         """Return object information"""
-        _, env_idx = self._preprocess_values([0], env_idx)
+        _, env_idx = self._preprocess_values(
+            np.zeros((self.n_envs, 1)), env_idx
+        )
         return np.array(self.mj_datas_qpos)[
             np.ix_(env_idx, self.obj_idxs[obj_idx])
         ]
@@ -165,14 +182,18 @@ class Sim:
 
     def get_robot_joints(self, env_idx=None):
         """Get the robot joint positions"""
-        _, env_idx = self._preprocess_values([0], env_idx)
+        _, env_idx = self._preprocess_values(
+            np.zeros((self.n_envs, 1)), env_idx
+        )
         return np.array(self.mj_datas_qpos)[
             np.ix_(env_idx, self.robot_joint_idx)
         ]
 
     def get_robot_ee(self, env_idx=None):
         """Get the robot end-effector positions"""
-        _, env_idx = self._preprocess_values([0], env_idx)
+        _, env_idx = self._preprocess_values(
+            np.zeros((self.n_envs, 1)), env_idx
+        )
         return np.array(self.mj_datas_qpos)[np.ix_(env_idx, self.robot_ee_idx)]
 
     def move_ee(self, ee, env_idx=None, wait_time=0.0):
@@ -276,22 +297,25 @@ class Sim:
     def _get_relative_qpos(self, init_qpos, last_qpos):
         """Take the inital and last qposand compute the relative 6D poses"""
         relative_qpos = np.zeros_like(init_qpos)
+        # For each environment
         for i in range(relative_qpos.shape[0]):
+            # For each object
             for j in range(int(relative_qpos.shape[1] // 7)):
-                qpos1 = init_qpos[i, 7 * j : 7 * (j + 1)]
-                pose1 = Pose(qpos1[:3], qpos1[3:])
-                qpos2 = last_qpos[i, 7 * j : 7 * (j + 1)]
-                pose2 = Pose(qpos2[:3], qpos2[3:])
-                qpos = (pose1.invert @ pose2).flat
+                pose1 = flat_to_matrix(init_qpos[i, 7 * j : 7 * (j + 1)])
+                pose2 = flat_to_matrix(last_qpos[i, 7 * j : 7 * (j + 1)])
+                qpos = matrix_to_flat(np.linalg.inv(pose1) @ pose2)
                 relative_qpos[i, 7 * j : 7 * (j + 1)] = qpos
         return relative_qpos
 
     def _preprocess_values(self, values, env_idx):
         """Preprocess the values and env_idx to match"""
+        values = np.asarray(values)
+
         # Preprocess env_idx first
         # if not provided, use environments that values need
         if env_idx is None:
-            env_idx = np.arange(len(values))
+            size = 1 if values.ndim == 1 else len(values)
+            env_idx = np.arange(size)
         # if a single environment provided, convert to array
         if isinstance(env_idx, int):
             env_idx = np.array([env_idx])
@@ -299,7 +323,6 @@ class Sim:
 
         # Preprocess values
         # if values is 1D, expand it to n_envs
-        values = np.array(values)
         if values.ndim == 1:
             values = np.tile(values, (len(env_idx), 1))
         else:
@@ -309,12 +332,14 @@ class Sim:
 
         return values, env_idx
 
-    def vis_sync(self, env_idx=0, real_time=False):
+    def vis_sync(self, env_idx=0):
         """Sync the simulation state to the viewer"""
+        if self.viewer is None:
+            return
         self.mj_data.qpos[:] = self.mj_datas_qpos[env_idx]
         mujoco.mj_forward(self.mj_model, self.mj_data)
         self.viewer.sync()
-        if real_time:
+        if self.real_time_vis:
             time.sleep(self.dt)
 
     def render_state(self, state, filename):
@@ -332,7 +357,7 @@ def test(sim: Sim):
     )
     sim.set_obj_init_poses(np.array([0, -0.7, 0, 1, 0, 0, 0]), 0)
     sim.reset()
-    input()
+    input("Start test")
 
     # Test control
     ctrl = np.array([-1.5, -1.5, 1.5, -1.5, -1.5, 0])
@@ -363,7 +388,8 @@ def test(sim: Sim):
 if __name__ == "__main__":
     np.set_printoptions(suppress=True, precision=5)
 
-    xml = open("mujoco_sim.xml").read()
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    xml = open(os.path.join(curr_dir, "mujoco_sim.xml")).read()
     xml = xml.replace("object_name", "cracker_box_flipped")
     sim = Sim(
         xml,

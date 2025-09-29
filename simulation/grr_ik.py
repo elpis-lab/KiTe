@@ -1,4 +1,5 @@
 import numpy as np
+
 from expansion_grr.bullet_api.loader import load_grr
 
 from geometry.trajectory import SplineTrajectory

@@ -1,4 +1,6 @@
 import mujoco
+import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 
 def render_mp4(
@@ -42,3 +44,41 @@ def render_mp4(
             writer.append_data(frame)
 
     return frames
+
+
+def flat_to_matrix(flat):
+    """Convert a flat 7D array to a 4x4 homogeneous matrix"""
+    flat = np.array(flat)
+    single = flat.ndim == 1
+    if single:
+        flat = flat[None, :]
+
+    # Convert to matrices
+    positions = flat[:, :3]
+    quat_xyzw = flat[:, [4, 5, 6, 3]]
+    rotations = R.from_quat(quat_xyzw).as_matrix()
+    matrices = np.tile(np.eye(4), (flat.shape[0], 1, 1))
+    matrices[:, :3, 3] = positions
+    matrices[:, :3, :3] = rotations
+
+    if single:
+        return matrices[0]
+    return matrices
+
+
+def matrix_to_flat(matrix):
+    """Convert a 4x4 homogeneous matrix to a flat 7D array"""
+    matrix = np.array(matrix)
+    single = matrix.ndim == 2
+    if single:
+        matrix = matrix[None, :, :]
+
+    # Convert to flat
+    positions = matrix[:, :3, 3]
+    quat_xyzw = R.from_matrix(matrix[:, :3, :3]).as_quat()
+    quat_wxyz = quat_xyzw[:, [3, 0, 1, 2]]
+    flats = np.concatenate([positions, quat_wxyz], axis=-1)
+
+    if single:
+        return flats[0]
+    return flats
