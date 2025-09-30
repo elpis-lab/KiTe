@@ -184,9 +184,9 @@ def se2_stats(se2_poses, alpha=0.5, tol=1e-3, max_iters=100):
             break
 
         # update mean on the manifold
-        t_mean = exp_se2(alpha * v) @ t_mean
+        t_mean = t_mean @ exp_se2(alpha * v)
 
     # Get mean and vairances
     mean = to_se2_vec(t_mean)
-    variance = deltas.var(axis=0, ddof=1)
-    return mean, variance
+    std = deltas.std(axis=0, ddof=1)
+    return mean, std
