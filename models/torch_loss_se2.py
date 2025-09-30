@@ -2,8 +2,27 @@ import torch
 import torch.nn.functional as F
 
 
+########## Loss functions for SE2 (OMPL Style) ##########
+def se2_split_loss(y_pred, y_true, rot_weight=0.2):
+    """
+    MSE Loss for SE2 Pose, position + weight * rotation.
+    Also handle the case of having logvar in output by ignoring it.
+    """
+    # If y_pred includes log-variance or other extra dims, trim it
+    if y_pred.shape[-1] > y_true.shape[-1]:
+        y_pred = y_pred[:, : y_true.shape[-1]]
+
+    # Compute MSE loss (as OMPL SE2 distance)
+    pos_error = torch.norm(y_true[:, :2] - y_pred[:, :2], dim=1)
+    rot_error = torch.abs(
+        (y_true[:, 2] - y_pred[:, 2] + torch.pi) % (2 * torch.pi) - torch.pi
+    )
+    loss = torch.mean(pos_error.mean() + rot_weight * rot_error.mean())
+    return loss
+
+
 ########## Loss functions for SE2 ##########
-def mse_se2_loss(y_pred, y_true):
+def mse_se2_loss(y_pred, y_true, rot_weight=0.2):
     """
     MSE Loss for SE2 Pose.
     Also handle the case of having logvar in output by ignoring it.
@@ -14,14 +33,15 @@ def mse_se2_loss(y_pred, y_true):
 
     # Compute MSE loss in tangent space
     delta_err = get_se2_err(y_pred, y_true)
-    loss = torch.mean(delta_err**2)
-    # # to add weights to rotation error
-    # weights = torch.tensor([1.0, 1.0, 0.25], device=delta_err.device)
-    # loss = torch.mean(delta_err.pow(2) * weights)
+    # loss = torch.mean(delta_err**2)
+    # Scale with rotation weight
+    s = torch.tensor([1.0, 1.0, rot_weight], device=delta_err.device)
+    delta_err_scaled = delta_err * s
+    loss = torch.mean(delta_err_scaled**2)
     return loss
 
 
-def nll_se2_loss(y_pred, y_true):
+def nll_se2_loss(y_pred, y_true, rot_weight=0.2):
     """NLL Loss for SE2 Pose."""
     dim = y_true.shape[-1]
     mu, logvar = y_pred[:, :dim], y_pred[:, dim : 2 * dim]
@@ -29,7 +49,16 @@ def nll_se2_loss(y_pred, y_true):
 
     # L = 0.5 * log(var) + 0.5 * ((mu - y)^2 / var) + constant
     delta_err = get_se2_err(mu, y_true)
-    nll = 0.5 * (logvar + (delta_err**2 / (var + 1e-8)))
+    # nll = 0.5 * (logvar + (delta_err**2 / (var + 1e-8)))
+
+    # Scale residual and variance consistently
+    s = torch.tensor([1.0, 1.0, rot_weight], device=delta_err.device)
+    delta_err_scaled = delta_err * s
+    # var' = (L Σ L^T)_diag = (L^2) * var (elementwise for diagonal Σ)
+    # log(var') = log(var) + log(L^2)
+    logvar_scaled = logvar + 2.0 * torch.log(s)
+    var_scaled = torch.exp(logvar_scaled)
+    nll = 0.5 * (logvar_scaled + (delta_err_scaled**2 / (var_scaled + 1e-8)))
     loss = torch.mean(nll)
     return loss
 
@@ -103,12 +132,13 @@ def log_se2(transforms):
     Logarithm map from SE(2) -> se(2).
 
     transforms is a Nx3x3 batch homogeneous transformation matrix.
-    Returns a Nx3 batch of vectors [delta_x, delta_y, omage] in tangent space.
+    Returns a Nx3 batch of vectors [delta_x, delta_y, omega] in tangent space.
 
     omega = arctan2(rot[1, 0], rot[0, 0])
     [dx, dy] = V(w)^-1 * t
     """
     device = transforms.device
+    dtype = transforms.dtype
     batch_size = transforms.shape[0]
 
     rot = transforms[:, 0:2, 0:2]  # (N, 2, 2)
@@ -116,20 +146,19 @@ def log_se2(transforms):
 
     # Compute the omega
     omega = torch.atan2(rot[:, 1, 0], rot[:, 0, 0])  # (N,)
-    c = torch.cos(omega)
-    s = torch.sin(omega)
 
     # Compute dx and dy
     # V_inv = w / (2 * (1 - cos(w))) *
     #         [[    sin(w)   , 1 - cos(w)]
     #          [-(1 - cos(w)),   sin(w)  ]]
+    c = torch.cos(omega)
+    s = torch.sin(omega)
     # Avoid division by zero in V_inv
     eps = 1e-3
     mask = torch.abs(omega) >= eps
     # only compute for elements where omega is not too small
-    V_inv = torch.zeros(
-        batch_size, 2, 2, device=device, dtype=transforms.dtype
-    )  # (N, 2, 2)
+    # make a batch_size of eye(2)
+    V_inv = torch.eye(2, device=device, dtype=dtype).repeat(batch_size, 1, 1)
     denom = 2 * (1 - c)
     V_inv[mask] = (
         omega[mask].unsqueeze(-1).unsqueeze(-1)
@@ -141,8 +170,6 @@ def log_se2(transforms):
         ],
         dim=1,
     )
-    V_inv[~mask] = torch.eye(2, device=device, dtype=transforms.dtype)
-
     dt = torch.bmm(V_inv, t.unsqueeze(-1)).squeeze(-1)  # (B, 2)
     dx, dy = dt[:, 0], dt[:, 1]
 
@@ -158,20 +185,21 @@ def to_se2_transform(params):
     Returns a Nx3x3 batch of SE2 transform matrices.
     """
     x, y, theta = params[:, 0], params[:, 1], params[:, 2]
+    transform = torch.zeros(
+        params.shape[0], 3, 3, device=params.device, dtype=params.dtype
+    )  # (N, 3, 3)
 
     cos_theta = torch.cos(theta)
     sin_theta = torch.sin(theta)
-    zeros = torch.zeros_like(x)
-    ones = torch.ones_like(x)
-
-    return torch.stack(
-        [
-            torch.stack([cos_theta, -sin_theta, x], dim=1),
-            torch.stack([sin_theta, cos_theta, y], dim=1),
-            torch.stack([zeros, zeros, ones], dim=1),
-        ],
-        dim=1,
-    )
+    ones = torch.ones_like(x, device=params.device, dtype=params.dtype)
+    transform[:, 0, 0] = cos_theta
+    transform[:, 0, 1] = -sin_theta
+    transform[:, 0, 2] = x
+    transform[:, 1, 0] = sin_theta
+    transform[:, 1, 1] = cos_theta
+    transform[:, 1, 2] = y
+    transform[:, 2, 2] = ones
+    return transform
 
 
 def inv_se2_transform(transforms):
@@ -254,12 +282,12 @@ def evidential_loss(y_pred, y_true, lambda_reg=0.01):
     # NIG Regularization
     evidence = 2 * nu + alpha
     # Original Regularization
-    reg = torch.abs(y_true - gamma) * evidence
+    # reg = torch.abs(y_true - gamma) * evidence
     # Normalized Regularization
     # https://arxiv.org/pdf/2205.10060
-    # wst = torch.sqrt(beta * (1 + nu) / alpha / nu + 1e-8)
-    # z = torch.pow(torch.abs(y_true - gamma) / wst, 2)
-    # reg = z * evidence
+    wst = torch.sqrt(beta * (1 + nu) / alpha / nu + 1e-8)
+    z = torch.pow(torch.abs(y_true - gamma) / wst, 2)
+    reg = z * evidence
     reg = torch.mean(reg)
 
     loss = nll + lambda_reg * reg
