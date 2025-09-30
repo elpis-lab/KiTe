@@ -1,0 +1,43 @@
+<mujoco model="school_bus">
+  <compiler angle="radian" />
+
+  <asset>
+    <mesh name="school_bus_visual_mesh" file="school_bus/textured.obj" />
+    <mesh name="school_bus_collision_mesh_0" file="school_bus/textured_coacd_0.stl" />
+    <mesh name="school_bus_collision_mesh_1" file="school_bus/textured_coacd_1.stl" />
+    <mesh name="school_bus_collision_mesh_2" file="school_bus/textured_coacd_2.stl" />
+    <mesh name="school_bus_collision_mesh_3" file="school_bus/textured_coacd_3.stl" />
+    <mesh name="school_bus_collision_mesh_4" file="school_bus/textured_coacd_4.stl" />
+    <texture name="school_bus_texture" type="2d" file="school_bus/texture_map.png" />
+    <material name="school_bus_material" texture="school_bus_texture" />
+
+    <material name="wheel" rgba="1 1 1 1"/>
+  </asset>
+
+  <worldbody>
+    <body name="school_bus" pos="0 0 0" euler="0 0 0">
+      <freejoint name="school_bus_joint" />
+      <geom name="school_bus_visual_geom" type="mesh" mesh="school_bus_visual_mesh" material="school_bus_material" pos="0.0 -3.88e-06 0.00017223" euler="0 0 0" contype="0" conaffinity="0" group="0" />
+      <geom name="school_bus_collision_geom_0" type="mesh" mesh="school_bus_collision_mesh_0" pos="0.0 -3.88e-06 0.00017223" euler="0 0 0" contype="1" conaffinity="1" group="3" />
+      <geom name="school_bus_collision_geom_1" type="mesh" mesh="school_bus_collision_mesh_1" pos="0.0 -3.88e-06 0.00017223" euler="0 0 0" contype="1" conaffinity="1" group="3" />
+      <geom name="school_bus_collision_geom_2" type="mesh" mesh="school_bus_collision_mesh_2" pos="0.0 -3.88e-06 0.00017223" euler="0 0 0" contype="1" conaffinity="1" group="3" />
+      <geom name="school_bus_collision_geom_3" type="mesh" mesh="school_bus_collision_mesh_3" pos="0.0 -3.88e-06 0.00017223" euler="0 0 0" contype="1" conaffinity="1" group="3" />
+      <geom name="school_bus_collision_geom_4" type="mesh" mesh="school_bus_collision_mesh_4" pos="0.0 -3.88e-06 0.00017223" euler="0 0 0" contype="1" conaffinity="1" group="3" />
+      <inertial pos="0 0 0" euler="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001" />
+
+      <body name="wheel_0" pos="0 0.04 -0.04" quat="0.7071068 0 0.7071068 0">
+        <joint name="wheel_joint_0" type="hinge" axis="0 0 1" limited="false" damping="0.0005"/>
+        <inertial pos="0 0 0" mass="0.1" diaginertia="0.001 0.001 0.001"/>
+        <!-- <geom type="capsule" size="0.015 0.02" material="wheel" contype="0" conaffinity="0" group="2"/> -->
+        <geom name="wheel_0_collision" type="capsule" size="0.015 0.02" contype="1" conaffinity="1" group="3"/>
+      </body>
+
+      <body name="wheel_1" pos="0 -0.085 -0.04" quat="0.7071068 0 0.7071068 0">
+        <joint name="wheel_joint_1" type="hinge" axis="0 0 1" limited="false" damping="0.0005"/>
+        <inertial pos="0 0 0" mass="0.1" diaginertia="0.001 0.001 0.001"/>
+        <!-- <geom type="capsule" size="0.015 0.02" material="wheel" contype="0" conaffinity="0" group="2"/> -->
+        <geom name="wheel_1_collision" type="capsule" size="0.015 0.02" contype="1" conaffinity="1" group="3"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
