@@ -63,7 +63,6 @@
     <material class="ur10" name="wrist2_visual" texture="wrist2_texture" />
     <material class="ur10" name="wrist3_visual" texture="wrist3_texture" />
 
-    <material class="ur10" name="black" rgba="0.033 0.033 0.033 1"/>
     <material class="ur10" name="gold" rgba="1 0.843 0 1"/>
   </asset>
 
