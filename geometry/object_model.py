@@ -10,7 +10,7 @@ def get_obj_shape(obj_name):
     return shape
 
 
-def get_obj_2d_points(obj_name, n_points=100, slice_height=0.0):
+def get_obj_2d_points(obj_name, n_points=200, slice_height=0.0):
     """Get the 2D points of the object"""
     pcd = ObjectPointCloud(obj_name, n_points, True, slice_height)
-    return pcd.points, pcd.normals
+    return pcd.points[:, :2], pcd.normals[:, :2]
