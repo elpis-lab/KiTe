@@ -4,18 +4,16 @@
 __pycache__
 *log.txt
 
-# Expansion GRR
-expansion_grr/
-
 # Model
 *.pt
 *.pth
 
 # Data & Results
+data/
 results/
 *.pkl
 *.npy
 
 # Test
-debug/
 test/
+debug/
