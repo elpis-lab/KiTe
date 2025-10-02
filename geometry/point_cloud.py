@@ -208,7 +208,6 @@ def _normals_2d(points2d: np.ndarray, center: np.ndarray) -> np.ndarray:
 
 if __name__ == "__main__":
     for obj in [
-        "mug",
         "cracker_box_flipped",
         "mustard_bottle_flipped",
         "banana",

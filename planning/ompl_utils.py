@@ -5,11 +5,14 @@ import ompl.control as oc
 import ompl.util as ou
 
 from active_learning.kernel import get_posteriors
+from lie_group.lie_se2 import adjoint_se2, log_se2
+from lie_group.lie_se2 import to_se2_transform, inv_se2_transform
+from lie_group.propagation import mvn_box_cdf
 from planning.planning_utils import in_collision_with_circles
 
 
 class SE2ControlPlanner:
-    """SE2 control planner using SST"""
+    """SE2 Belief control planner using SST"""
 
     def __init__(
         self,
@@ -19,10 +22,13 @@ class SE2ControlPlanner:
         obstacles,
         model,
         x_train,
+        belief,
         active_sampling,
+        active_selection,
         controls=None,
     ):
         """Initialize the OMPL SE2 planner"""
+        self.belief = belief
         self.c_dim = len(control_bounds)
 
         # For collision checking
@@ -41,12 +47,14 @@ class SE2ControlPlanner:
         self.si = ControlSpaceInformation(self.space, self.control_space)
         self.ss = oc.SimpleSetup(self.si)
         self.pdef = self.ss.getProblemDefinition()
-        self.set_up_planner(model, x_train, active_sampling, controls)
+        self.set_up_planner(
+            model, x_train, belief, active_sampling, active_selection, controls
+        )
 
     def init_state_space(self, bounds):
         """Initialize the state space"""
         # Define space
-        space = ob.SE2StateSpace()
+        space = ob.SE2BeliefStateSpace()
 
         # Set position bounds
         assert len(bounds) == 2, "Bounds should only include position"
@@ -80,18 +88,26 @@ class SE2ControlPlanner:
 
         return control_space
 
-    def set_up_planner(self, model, x_train, active_sampling, controls):
+    def set_up_planner(
+        self,
+        model,
+        x_train,
+        belief,
+        active_sampling,
+        active_selection,
+        controls,
+    ):
         """Initialize the planner"""
         # State validity checker
         self.set_state_validity_checker_fn(self.is_state_valid)
 
         # State propagator
-        propagator = SE2Propagator(self.si, model)
+        propagator = SE2BeliefPropagator(self.si, model)
         self.set_state_propagator_fn(propagator.propagate)
 
         # Control sampler
         if active_sampling:
-            control_sampler = lambda c_space: ActiveBatchControlSampler(
+            control_sampler = lambda c_space: ActiveControlBatchSampler(
                 self.space, c_space, model, x_train, controls
             )
         else:
@@ -118,8 +134,12 @@ class SE2ControlPlanner:
         #     self.set_optimization_objective(combo)
 
         # Planner algorithm
-        self.set_planner(oc.SST)
-        self.si.setPropagationStepSize(0.5)
+        if active_selection:
+            algo = oc.BeliefSST
+        else:
+            algo = oc.SST
+        self.set_planner(algo)
+        self.si.setPropagationStepSize(0.5)  # Validity checking interpolation
         self.si.setMinMaxControlDuration(1, 1)
 
     def get_state(self, state_values):
@@ -130,6 +150,8 @@ class SE2ControlPlanner:
         state().setX(float(state_values[0]))
         state().setY(float(state_values[1]))
         state().setYaw(float(state_values[2]))
+        for i in range(6):
+            state().setCovariance(i, float(state_values[i + 3]))
         return state
 
     def plan(
@@ -143,17 +165,27 @@ class SE2ControlPlanner:
     ):
         """Plan to goal"""
         # Set start
-        start_state = self.get_state([start[0], start[1], start[2]])
+        start_state = self.get_state(
+            [start[0], start[1], start[2], 1e-6, 0, 0, 1e-6, 0, 1e-6]
+        )
         self.ss.setStartState(start_state)
 
         # Set goal
-        goal_state = self.get_state([goal[0], goal[1], goal[2]])
-        # goal_bounds = ob.RealVectorBounds(3)
-        # for i in range(3):
-        #     goal_bounds.setLow(i, goal_ranges[i][0])
-        #     goal_bounds.setHigh(i, goal_ranges[i][1])
-        # self.ss.setGoal(ob.SE2GoalState(self.si, goal_state, goal_bounds))
-        self.ss.setGoal(SE2GoalState(self.si, goal_state, goal_ranges))
+        goal_state = self.get_state(
+            [goal[0], goal[1], goal[2], 1e-6, 0, 0, 1e-6, 0, 1e-6]
+        )
+        goal_bounds = ob.RealVectorBounds(3)
+        for i in range(3):
+            goal_bounds.setLow(i, goal_ranges[i][0])
+            goal_bounds.setHigh(i, goal_ranges[i][1])
+        self.ss.setGoal(ob.SE2GoalState(self.si, goal_state, goal_bounds))
+
+        # Set optimization objective
+        # This is equivalent to path length objective if not in belief space
+        objective = SE2BeliefOptimizationObjective(
+            self.si, goal, goal_ranges, self.belief
+        )
+        self.set_optimization_objective(objective)
 
         # Solve
         self.ss.setup()
@@ -176,7 +208,8 @@ class SE2ControlPlanner:
             for i in range(path.getStateCount()):
                 state = path.getState(i)
                 s = [state.getX(), state.getY(), state.getYaw()]
-                states.append(s)
+                bs = [state.getCovariance(i) for i in range(6)]
+                states.append(s + bs)
             # Extract the controls
             controls = []
             for i in range(path.getControlCount()):
@@ -315,7 +348,7 @@ class ClearanceObjective(ob.StateCostIntegralObjective):
         return ob.Cost(1 / self.clearance_fn(state))
 
 
-class SE2Propagator:  # (oc.SE2Propagator):
+class SE2BeliefPropagator(oc.SE2BeliefPropagator):
     """
     See ControlBatchSampler for more details.
     Propagator is now only responsible to propagate given the
@@ -325,48 +358,24 @@ class SE2Propagator:  # (oc.SE2Propagator):
     """
 
     def __init__(self, si, model):
-        """Initialize the SE2 propagator"""
-        # super().__init__(si)
+        """Initialize the SE2 belief propagator"""
+        super().__init__(si)
         self.space = si.getStateSpace()
         self.model = model
         dim = si.getControlSpace().getDimension()
         s_dim = self.space.getDimension()
         self.c_dim = dim - s_dim
 
-    # TODO: Implement this in C++
     def propagate(self, state, control, duration, result):
         """Extract the delta state from the control values and propagate"""
         # Create delta state
-        # delta_state = ob.State(self.space)
-        # delta_state().setX(float(control[self.c_dim + 0]))
-        # delta_state().setY(float(control[self.c_dim + 1]))
-        # delta_state().setYaw(float(control[self.c_dim + 2]))
-        # self.propagateSE2(state, delta_state, result)
-        init = self._to_matrix([state.getX(), state.getY(), state.getYaw()])
-        cs = [
-            control[self.c_dim],
-            control[self.c_dim + 1],
-            control[self.c_dim + 2],
-        ]
-        d_state = self._to_matrix(cs)
-        final = self._to_vector(init @ d_state)
-        result.setX(final[0])
-        result.setY(final[1])
-        result.setYaw(final[2])
-
-    def _to_matrix(self, vector):
-        c = np.cos(vector[2])
-        s = np.sin(vector[2])
-        return np.array([[c, -s, vector[0]], [s, c, vector[1]], [0, 0, 1]])
-
-    def _to_vector(self, matrix):
-        return np.array(
-            [
-                matrix[0, 2],
-                matrix[1, 2],
-                np.arctan2(matrix[1, 0], matrix[0, 0]),
-            ]
-        )
+        delta_state = ob.State(self.space)
+        delta_state().setX(float(control[self.c_dim + 0]))
+        delta_state().setY(float(control[self.c_dim + 1]))
+        delta_state().setYaw(float(control[self.c_dim + 2]))
+        for i in range(6):
+            delta_state().setCovariance(i, float(control[self.c_dim + 3 + i]))
+        self.propagateSE2Belief(state, delta_state, result)
 
 
 class ControlBatchSampler(oc.ControlSampler):
@@ -389,7 +398,7 @@ class ControlBatchSampler(oc.ControlSampler):
         space,
         c_space,
         model,
-        x_train,
+        x_train=None,
         control_list=None,
         cache_size=10000,
     ):
@@ -445,31 +454,40 @@ class ControlBatchSampler(oc.ControlSampler):
             i_l, i_h = i, i + batch_size
 
             pred = self.model(self.controls[i_l:i_h])
-            # mean
+
+            # Mean
             self.d_states[i_l:i_h, :3] = pred[:, :3]
-            # variance
+
+            # Variance
+            if self.d_states.shape[1] > 3:
+                self.d_states[i_l:i_h, [3, 6, 8]] = 1e-3
+            # Kernel method (epistemic) if available
             if self.s_dim == 3 or pred.shape[1] == 3:
-                # Kernel method
-                self.total_var[i_l:i_h] = get_posteriors(
-                    self.model.model,
-                    self.x_train,
-                    self.controls[i_l:i_h],
-                    sigma=5e-3,
-                )
+                if self.x_train is not None:
+                    self.total_var[i_l:i_h] = get_posteriors(
+                        self.model.model,
+                        self.x_train,
+                        self.controls[i_l:i_h],
+                        sigma=5e-3,
+                    )
+            # NLL variance prediction
             elif pred.shape[1] == 2 * 3:
-                # Variance prediction
                 variances = np.exp(pred[:, 3:])
-                self.d_states[i_l:i_h, [3, 6, 8]] = variances
+                if self.d_states.shape[1] > 3:
+                    self.d_states[i_l:i_h, [3, 6, 8]] = variances
                 self.total_var[i_l:i_h] = np.sum(variances, axis=1)
+            # Evidential regression prediction
             elif pred.shape[1] == 4 * 3:
                 nu, alpha, beta = pred[:, 3:6], pred[:, 6:9], pred[:, 9:]
                 # Original std
                 # variances = beta / (nu * (alpha - 1.0))
                 # Better aleatoric Proxy
-                variances = beta * (1 + nu) / (alpha * nu)
-                self.d_states[i_l:i_h, [3, 6, 8]] = variances
+                aleatoric = beta * (1 + nu) / (alpha * nu)
                 epistemic = 1 / nu
-                self.total_var[i_l:i_h] = np.sum(epistemic, axis=1)
+                total_var = aleatoric + epistemic
+                if self.d_states.shape[1] > 3:
+                    self.d_states[i_l:i_h, [3, 6, 8]] = aleatoric
+                self.total_var[i_l:i_h] = np.sum(aleatoric, axis=1)
             else:
                 raise ValueError(
                     f"Invalid model prediction dimension: {pred.shape[1]}"
@@ -491,7 +509,7 @@ class ControlBatchSampler(oc.ControlSampler):
             self.sample_cache()
 
 
-class ActiveBatchControlSampler(ControlBatchSampler):
+class ActiveControlBatchSampler(ControlBatchSampler):
     """
     Since control propagator uses NN to predict the control effect
     and is much faster to conduct in batch, the control sampler is modified to
@@ -566,39 +584,135 @@ class ActiveBatchControlSampler(ControlBatchSampler):
             self.sample_cache()
 
 
-# TODO: Implement this in C++
-class SE2GoalState(ob.GoalState):
-    def __init__(self, si, goal, ranges):
+class SE2BeliefOptimizationObjective(ob.PathLengthOptimizationObjective):
+    """SE2 optimization objective in belief space
+
+    The accumulated motion cost is computed with Wasserstein2 distance.
+    The state cost is computed with negative log likelihood of the state
+    being in the goal region.
+    """
+
+    def __init__(self, si, goal, goal_ranges, wasserstein=True, max_nll=10.0):
+        """Initialize the optimization objective"""
         super().__init__(si)
-        self.ranges = ranges
-        self.setState(goal)
-        self.setThreshold(0.01)
+        self.si = si
+        self.goal = to_se2_transform(goal)
+        self.goal_ranges = np.asarray(goal_ranges)
+        self.wasserstein = wasserstein
 
-    def distanceGoal(self, state: ob.State) -> float:
-        x = state.getX()
-        y = state.getY()
-        yaw = state.getYaw()
-        goal_x = self.getState().getX()
-        goal_y = self.getState().getY()
-        goal_yaw = self.getState().getYaw()
+        # a value to prevent nll from being too large
+        self.min_prob = np.exp(-max_nll)
+        # SE2 ranges, to convert to tangent space ranges
+        self.l_ranges, self.h_ranges = self.to_tangent_ranges(self.goal_ranges)
 
-        # distance to goal in SE2 space
-        x_dist = x - goal_x
-        y_dist = y - goal_y
-        yaw_dist = yaw - goal_yaw
-        yaw_dist = (yaw_dist + np.pi) % (2 * np.pi) - np.pi
+    def to_tangent_ranges(self, goal_ranges):
+        """Convert SE2 ranges to tangent space ranges
+        The tangent space ranges uses conservative inner bound
+        """
+        # Build grid
+        x_l, y_l, yaw_l = goal_ranges[:, 0]
+        x_h, y_h, yaw_h = goal_ranges[:, 1]
+        grid = np.array([[x_l, y_l], [x_l, y_h], [x_h, y_l], [x_h, y_h]])
+        # Build Axis-aligned tangent boxes - Sample yaw angles
+        yaw_samples = np.linspace(yaw_l, yaw_h, 9)
+        x_list, y_list = [], []
+        for yaw in yaw_samples:
+            jac_inv = self.jac_inv_se2(yaw)
+            pts = (jac_inv @ grid.T).T
+            x_list.append(np.max(np.abs(pts[:, 0])))
+            y_list.append(np.max(np.abs(pts[:, 1])))
+        # Inner = intersection across yaw -> min half-extent
+        x_min = np.min(x_list)
+        y_min = np.min(y_list)
 
-        # if in range, return a value smaller than 0.01
-        # to indicate success, since threshold is by set to 0.01
-        if (
-            self.ranges[0][0] <= x_dist <= self.ranges[0][1]
-            and self.ranges[1][0] <= y_dist <= self.ranges[1][1]
-            and self.ranges[2][0] <= yaw_dist <= self.ranges[2][1]
-        ):
-            return 0
-        else:
-            dist = (x_dist**2 + y_dist**2) ** 0.5 + 0.5 * abs(yaw_dist)
-            return dist
+        # Tangent space ranges
+        lower = np.array([-x_min, -y_min, yaw_l])
+        upper = np.array([x_min, y_min, yaw_h])
+        return lower, upper
+
+    def motionCost(self, s1, s2):
+        """Compute the cost of the motion from s1 to s2"""
+        # Euclidean distance
+        s1_x, s1_y, s1_yaw = s1.getX(), s1.getY(), s1.getYaw()
+        s2_x, s2_y, s2_yaw = s2.getX(), s2.getY(), s2.getYaw()
+        t1 = to_se2_transform([s1_x, s1_y, s1_yaw])
+        t2 = to_se2_transform([s2_x, s2_y, s2_yaw])
+        t_delta = inv_se2_transform(t1) @ t2
+        dist = np.linalg.norm(log_se2(t_delta))
+        # OMPL distance
+        # dist = ((s1_x - s2_x) ** 2 + (s1_y - s2_y) ** 2) ** 0.5
+        # dist += 0.5 * abs(angle_diff(s1_yaw, s2_yaw))
+
+        # Belief distance
+        if self.wasserstein:
+            cov1 = self.vec_to_cov([s1.getCovariance(i) for i in range(6)])
+            cov2 = self.vec_to_cov([s2.getCovariance(i) for i in range(6)])
+            dist += self.wasserstein_distance(cov1, cov2)
+        return ob.Cost(dist)
+
+    def stateCost(self, state):
+        """
+        Compute the negative log likelihood of the state
+        being in the goal region
+        """
+        # State
+        x, y, yaw = state.getX(), state.getY(), state.getYaw()
+        mean = to_se2_transform([x, y, yaw])
+        var_state = [state.getCovariance(i) for i in range(6)]
+        cov = self.vec_to_cov(var_state)
+
+        # Compute mu and cov in the goal frame in tangent space
+        rel_transofrm = inv_se2_transform(self.goal) @ mean
+        rel_ad = adjoint_se2(rel_transofrm)
+        rel_mu = log_se2(rel_transofrm)
+        rel_cov = rel_ad @ cov @ rel_ad.T
+
+        # Theoretical probability - Success rate
+        prob = mvn_box_cdf(self.l_ranges, self.h_ranges, rel_mu, rel_cov)
+        nll = -np.log(max(prob, self.min_prob))
+
+        return ob.Cost(nll)
+
+    @staticmethod
+    def wasserstein_distance(cov1, cov2):
+        """
+        Compute the Wasserstein2 distance between two covariance matrices
+        dist = trace(cov1 + cov2 - 2 * sqrt(sqrt(cov1) @ cov2 @ sqrt(cov1)))
+        optimized version:
+        dist = trace(cov1) + trace(cov2)
+             - 2 * Sum(Sqrt(Eigenvalues( sqrt(cov1) @ cov2 @ sqrt(cov1) )))
+        """
+        sqrt_cov1 = SE2BeliefOptimizationObjective.sqrtm_spd(cov1)
+        eigenvalues = np.linalg.eigvals(sqrt_cov1 @ cov2 @ sqrt_cov1)
+        sqrt_tr = np.sum(np.sqrt(eigenvalues))
+        return np.trace(cov1) + np.trace(cov2) - 2 * sqrt_tr
+
+    @staticmethod
+    def sqrtm_spd(matrix):
+        """Fast matrix square root for SPD matrices using eigendecomposition"""
+        eigvals, eigvecs = np.linalg.eigh(matrix)
+        return eigvecs @ np.diag(np.sqrt(eigvals)) @ eigvecs.T
+
+    @staticmethod
+    def vec_to_cov(vector):
+        """Convert vector to covariance matrix"""
+        return np.array(
+            [
+                [vector[0], vector[1], vector[2]],
+                [vector[1], vector[3], vector[4]],
+                [vector[2], vector[4], vector[5]],
+            ]
+        )
+
+    @staticmethod
+    def jac_inv_se2(w):
+        """Convert yaw to Jacobian inverse"""
+        if abs(w) < 1e-12:
+            return np.eye(2)
+        alpha = w / (2.0 * np.sin(w / 2.0))
+        c = np.cos(w / 2.0)
+        s = np.sin(w / 2.0)
+        return alpha * np.array([[c, s], [-s, c]])
 
 
 def set_ompl_seed(seed):

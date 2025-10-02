@@ -195,7 +195,7 @@ def main(obj_name, model_type, use_var=1, n_data=1000, seed=42, plot=False):
     data_loader = DataLoader(data_name)
     datasets = data_loader.load_data()
     x_train, y_train = datasets["x_pool"], datasets["y_pool"]
-    perm = np.random.permutation(1000)
+    perm = np.random.permutation(2000)  # use the first 2000 data for training
     x_train, y_train = x_train[perm], y_train[perm]
     # eval
     # data_loader = DataLoader(rep_data_name, val_size=900)
@@ -222,6 +222,8 @@ def main(obj_name, model_type, use_var=1, n_data=1000, seed=42, plot=False):
     res = evaluate_results(pred, y_eval, verbose=True)
 
     # Save the model
+    os.makedirs("results/learning", exist_ok=True)
+    os.makedirs("results/models", exist_ok=True)
     np.save(f"results/learning/idx_used_{name}.npy", perm[:n_data])
     np.save(f"results/learning/loss_{name}.npy", res)
     model.save(f"results/models/{name}.pth")

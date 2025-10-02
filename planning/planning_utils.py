@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 # State Utils
 def get_random_se2_states(
-    n_data, pos_range=((-0.2, 0.2), (-0.9, -0.5)), euler_range=(-np.pi, np.pi)
+    n_data, pos_range=((-0.4, 0.4), (-1.0, -0.4)), euler_range=(-np.pi, np.pi)
 ):
     """Generate random initial states"""
     pos_x = np.random.uniform(pos_range[0][0], pos_range[0][1], (n_data, 1))
@@ -254,3 +254,22 @@ def draw_rectangle(
     # Add text label
     if label is not None:
         plt.text(x, y, label, ha="center", va="center", color="black")
+
+
+if __name__ == "__main__":
+    plot_states(
+        [[0, -0.7, 0]],
+        obstacles=np.array(
+            [
+                [0.0, -0.7, 0.15],
+                [-0.4, -1.0, 0.15],
+                #
+                [0, -0.5, 0.05],
+                [-0.25, -0.8, 0.05],
+                [0.25, -0.8, 0.05],
+            ]
+        ),
+        planned_states=None,
+        # obj_shape=[0.18, 0.22],
+        obj_shape=[0.8, 0.6],
+    )

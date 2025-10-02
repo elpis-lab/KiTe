@@ -13,8 +13,6 @@ object_names=(
     school_bus
     trash_truck
     # real_cracker_box_flipped
-    # real_mustard_bottle_flipped
-    # real_master_chef_can_flipped
     # real_school_bus
     # real_trash_truck
 )
@@ -41,7 +39,7 @@ devices=(
 model_classes=(
     mlp
 )
-n_experiments=1
+n_experiments=5
 
 # Repeat experiment
 model_idx=0
