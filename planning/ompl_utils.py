@@ -7,7 +7,7 @@ import ompl.util as ou
 from active_learning.kernel import get_posteriors
 from lie_group.lie_se2 import adjoint_se2, log_se2
 from lie_group.lie_se2 import to_se2_transform, inv_se2_transform
-from lie_group.propagation import mvn_box_cdf
+from lie_group.propagation import mvn_box_cdf, to_tangent_ranges
 from planning.planning_utils import in_collision_with_circles
 
 
@@ -135,9 +135,11 @@ class SE2ControlPlanner:
 
         # Planner algorithm
         if active_selection:
-            algo = oc.BeliefSST
+            algo = oc.SST(self.si)
+            algo.setPruningRadius(0.03)
         else:
-            algo = oc.SST
+            algo = oc.SST(self.si)
+            algo.setPruningRadius(0.03)
         self.set_planner(algo)
         self.si.setPropagationStepSize(0.5)  # Validity checking interpolation
         self.si.setMinMaxControlDuration(1, 1)
@@ -183,7 +185,7 @@ class SE2ControlPlanner:
         # Set optimization objective
         # This is equivalent to path length objective if not in belief space
         objective = SE2BeliefOptimizationObjective(
-            self.si, goal, goal_ranges, self.belief
+            self.si, goal, goal_ranges, wasserstein=self.belief
         )
         self.set_optimization_objective(objective)
 
@@ -233,7 +235,7 @@ class SE2ControlPlanner:
 
     def set_planner(self, planner):
         """Set the planner"""
-        self.ss.setPlanner(planner(self.si))
+        self.ss.setPlanner(planner)
 
     def set_state_propagator_fn(self, state_propagator_fn):
         """Set the state propagator"""
@@ -531,12 +533,14 @@ class ActiveControlBatchSampler(ControlBatchSampler):
         model,
         x_train,
         control_list=None,
-        pool_size=5,
+        pool_size=10,
+        p_random=0.1,
         cache_size=10000,
     ):
         """Initialize the active batch control sampler"""
         self.n_pool = cache_size
         self.pool_size = pool_size
+        self.p_random = p_random
         super().__init__(
             space,
             c_space,
@@ -569,8 +573,16 @@ class ActiveControlBatchSampler(ControlBatchSampler):
         # u = np.random.uniform(size=self.n_pool)
         # cdf = np.cumsum(weights, axis=1)
         # indices = (u[:, None] <= cdf).argmax(axis=1)
+
         # Option 2 - Simply choose the control with the lowest variance
         indices = np.argmin(self.total_var, axis=1)
+        # To ensure probabilistic complete, include random sampling
+        n_random = max(1, int(self.p_random * self.n_pool))
+        random_pools = np.random.choice(
+            self.n_pool, size=n_random, replace=False
+        )
+        random_indices = np.random.randint(0, self.pool_size, size=n_random)
+        indices[random_pools] = random_indices
 
         # Select the best control and corresponding delta state
         rows = np.arange(self.n_pool)
@@ -587,48 +599,34 @@ class ActiveControlBatchSampler(ControlBatchSampler):
 class SE2BeliefOptimizationObjective(ob.PathLengthOptimizationObjective):
     """SE2 optimization objective in belief space
 
-    The accumulated motion cost is computed with Wasserstein2 distance.
+    The accumulated motion cost is computed with Wasserstein distance.
     The state cost is computed with negative log likelihood of the state
     being in the goal region.
     """
 
-    def __init__(self, si, goal, goal_ranges, wasserstein=True, max_nll=10.0):
+    def __init__(
+        self,
+        si,
+        goal,
+        goal_ranges,
+        rot_weight=0.2,
+        wasserstein=True,
+        max_nll=10.0,
+    ):
         """Initialize the optimization objective"""
         super().__init__(si)
         self.si = si
         self.goal = to_se2_transform(goal)
+        self.inv_goal = inv_se2_transform(self.goal)
         self.goal_ranges = np.asarray(goal_ranges)
         self.wasserstein = wasserstein
+        self.weight = np.diag([1.0, 1.0, rot_weight])
 
         # a value to prevent nll from being too large
         self.min_prob = np.exp(-max_nll)
         # SE2 ranges, to convert to tangent space ranges
-        self.l_ranges, self.h_ranges = self.to_tangent_ranges(self.goal_ranges)
-
-    def to_tangent_ranges(self, goal_ranges):
-        """Convert SE2 ranges to tangent space ranges
-        The tangent space ranges uses conservative inner bound
-        """
-        # Build grid
-        x_l, y_l, yaw_l = goal_ranges[:, 0]
-        x_h, y_h, yaw_h = goal_ranges[:, 1]
-        grid = np.array([[x_l, y_l], [x_l, y_h], [x_h, y_l], [x_h, y_h]])
-        # Build Axis-aligned tangent boxes - Sample yaw angles
-        yaw_samples = np.linspace(yaw_l, yaw_h, 9)
-        x_list, y_list = [], []
-        for yaw in yaw_samples:
-            jac_inv = self.jac_inv_se2(yaw)
-            pts = (jac_inv @ grid.T).T
-            x_list.append(np.max(np.abs(pts[:, 0])))
-            y_list.append(np.max(np.abs(pts[:, 1])))
-        # Inner = intersection across yaw -> min half-extent
-        x_min = np.min(x_list)
-        y_min = np.min(y_list)
-
-        # Tangent space ranges
-        lower = np.array([-x_min, -y_min, yaw_l])
-        upper = np.array([x_min, y_min, yaw_h])
-        return lower, upper
+        t_ranges = to_tangent_ranges(self.goal_ranges)
+        self.l_ranges, self.h_ranges = t_ranges[:, 0], t_ranges[:, 1]
 
     def motionCost(self, s1, s2):
         """Compute the cost of the motion from s1 to s2"""
@@ -638,8 +636,8 @@ class SE2BeliefOptimizationObjective(ob.PathLengthOptimizationObjective):
         t1 = to_se2_transform([s1_x, s1_y, s1_yaw])
         t2 = to_se2_transform([s2_x, s2_y, s2_yaw])
         t_delta = inv_se2_transform(t1) @ t2
-        dist = np.linalg.norm(log_se2(t_delta))
-        # OMPL distance
+        dist = np.linalg.norm(self.weight @ log_se2(t_delta))
+        # OMPL SE2 distance
         # dist = ((s1_x - s2_x) ** 2 + (s1_y - s2_y) ** 2) ** 0.5
         # dist += 0.5 * abs(angle_diff(s1_yaw, s2_yaw))
 
@@ -647,7 +645,13 @@ class SE2BeliefOptimizationObjective(ob.PathLengthOptimizationObjective):
         if self.wasserstein:
             cov1 = self.vec_to_cov([s1.getCovariance(i) for i in range(6)])
             cov2 = self.vec_to_cov([s2.getCovariance(i) for i in range(6)])
-            dist += self.wasserstein_distance(cov1, cov2)
+            # express cov2 in the frame of cov1
+            adj = adjoint_se2(inv_se2_transform(t_delta))
+            cov2 = adj @ cov2 @ adj.T
+            # apply weights
+            cov1 = self.weight @ cov1 @ self.weight.T
+            cov2 = self.weight @ cov2 @ self.weight.T
+            dist = np.sqrt(dist**2 + self.wasserstein_distance(cov1, cov2))
         return ob.Cost(dist)
 
     def stateCost(self, state):
@@ -662,7 +666,7 @@ class SE2BeliefOptimizationObjective(ob.PathLengthOptimizationObjective):
         cov = self.vec_to_cov(var_state)
 
         # Compute mu and cov in the goal frame in tangent space
-        rel_transofrm = inv_se2_transform(self.goal) @ mean
+        rel_transofrm = self.inv_goal @ mean
         rel_ad = adjoint_se2(rel_transofrm)
         rel_mu = log_se2(rel_transofrm)
         rel_cov = rel_ad @ cov @ rel_ad.T
@@ -670,7 +674,6 @@ class SE2BeliefOptimizationObjective(ob.PathLengthOptimizationObjective):
         # Theoretical probability - Success rate
         prob = mvn_box_cdf(self.l_ranges, self.h_ranges, rel_mu, rel_cov)
         nll = -np.log(max(prob, self.min_prob))
-
         return ob.Cost(nll)
 
     @staticmethod
@@ -682,16 +685,16 @@ class SE2BeliefOptimizationObjective(ob.PathLengthOptimizationObjective):
         dist = trace(cov1) + trace(cov2)
              - 2 * Sum(Sqrt(Eigenvalues( sqrt(cov1) @ cov2 @ sqrt(cov1) )))
         """
-        sqrt_cov1 = SE2BeliefOptimizationObjective.sqrtm_spd(cov1)
-        eigenvalues = np.linalg.eigvals(sqrt_cov1 @ cov2 @ sqrt_cov1)
+
+        def sqrtm_spd(matrix):
+            """Fast matrix square root for SPD matrices"""
+            eigvals, eigvecs = np.linalg.eigh(matrix)
+            return eigvecs @ np.diag(np.sqrt(eigvals)) @ eigvecs.T
+
+        sqrt_cov1 = sqrtm_spd(cov1)
+        eigenvalues = np.linalg.eigvalsh(sqrt_cov1 @ cov2 @ sqrt_cov1)
         sqrt_tr = np.sum(np.sqrt(eigenvalues))
         return np.trace(cov1) + np.trace(cov2) - 2 * sqrt_tr
-
-    @staticmethod
-    def sqrtm_spd(matrix):
-        """Fast matrix square root for SPD matrices using eigendecomposition"""
-        eigvals, eigvecs = np.linalg.eigh(matrix)
-        return eigvecs @ np.diag(np.sqrt(eigvals)) @ eigvecs.T
 
     @staticmethod
     def vec_to_cov(vector):
@@ -703,16 +706,6 @@ class SE2BeliefOptimizationObjective(ob.PathLengthOptimizationObjective):
                 [vector[2], vector[4], vector[5]],
             ]
         )
-
-    @staticmethod
-    def jac_inv_se2(w):
-        """Convert yaw to Jacobian inverse"""
-        if abs(w) < 1e-12:
-            return np.eye(2)
-        alpha = w / (2.0 * np.sin(w / 2.0))
-        c = np.cos(w / 2.0)
-        s = np.sin(w / 2.0)
-        return alpha * np.array([[c, s], [-s, c]])
 
 
 def set_ompl_seed(seed):
