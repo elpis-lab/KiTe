@@ -135,7 +135,7 @@ class SE2ControlPlanner:
 
         # Planner algorithm
         if active_selection:
-            algo = oc.SST(self.si)
+            algo = oc.BeliefSST(self.si)
             algo.setPruningRadius(0.03)
         else:
             algo = oc.SST(self.si)
