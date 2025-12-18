@@ -12,7 +12,6 @@ objs=(
     letter_t
     master_chef_can_flipped
     trash_truck
-    school_bus
 )
 
 for obj in "${objs[@]}"; do

@@ -5,30 +5,38 @@ script_dir="$(dirname "$(realpath "$0")")"
 start_time=$(date +%s)
 
 # List of object name
+# objs=(
+#     cracker_box_flipped
+#     mustard_bottle_flipped
+#     banana
+#     letter_t
+#     master_chef_can_flipped
+#     trash_truck
+#     real_cracker_box_flipped
+#     # real_trash_truck
+# )
 objs=(
     cracker_box_flipped
-    # mustard_bottle_flipped
-    # banana
-    # letter_t
     master_chef_can_flipped
-    # school_bus
-    # trash_truck
-    # real_cracker_box_flipped
-    # real_school_bus
+    real_cracker_box_flipped
+    trash_truck
+    mustard_bottle_flipped
+    banana
+    letter_t
     # real_trash_truck
 )
 model_type="mlp"
 use_var=1
 n_datas=(
-    # 100
-    # 200
-    # 300
-    # 400
-    # 500
-    # 600
-    # 700
-    # 800
-    # 900
+    100
+    200
+    300
+    400
+    500
+    600
+    700
+    800
+    900
     1000
 )
 active_sampling=(

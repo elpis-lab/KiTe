@@ -10,10 +10,8 @@ object_names=(
     banana
     letter_t
     master_chef_can_flipped
-    school_bus
     trash_truck
     # real_cracker_box_flipped
-    # real_school_bus
     # real_trash_truck
 )
 use_vars=(

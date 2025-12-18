@@ -15,11 +15,7 @@
   <include file="assets/ur10_rod.xml" />
   <include file="assets/object_name.xml" />
   <!-- <include file="assets/cracker_box_flipped.xml" /> -->
-  <!-- <include file="assets/letter_t.xml" /> -->
   <!-- <include file="assets/master_chef_can_flipped.xml" /> -->
-  <!-- <include file="assets/vehicle.xml" /> -->
-  <!-- <include file="assets/mustard_bottle_flipped.xml" /> -->
-  <!-- <include file="assets/banana.xml" /> -->
 
   <!-- For debugging -->
   <worldbody>
