@@ -7,18 +7,14 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-from utils import DataLoader, parse_args, set_seed, get_names
+from experiments.utils import DataLoader, parse_args, set_seed, get_names
 from geometry.pose import angle_diff
 from geometry.object_model import get_obj_shape
 from models.physics import push_physics
 from models.torch_model import MLP, MLPVar, MLPEvidential
 from models.torch_model import Physics, ResidualPhysics
 from models.torch_model import ResidualPhysicsVar, ResidualPhysicsEvidential
-from models.torch_loss_se2 import (
-    se2_split_loss,
-    mse_se2_loss,
-    nll_se2_loss,
-)
+from models.torch_loss_se2 import se2_split_loss, mse_se2_loss, nll_se2_loss
 from models.torch_loss_se2 import beta_nll_se2_loss, evidential_se2_loss
 from models.model import TorchModel
 
@@ -26,7 +22,7 @@ from models.model import TorchModel
 def load_model(
     model_type="mlp",
     obj_shape=None,
-    use_var=0,  # 0: no variance, 1: variance, 2: evidential
+    use_var=0,  # 0: no variance, 1: variance, 2: evidential (deprecated)
     in_dim=3,
     out_dim=3,
     hidden=32,
@@ -50,10 +46,10 @@ def load_model(
             model_class = lambda: MLP(in_dim, out_dim, hidden, dropout)
         elif use_var == 1:
             model_class = lambda: MLPVar(in_dim, out_dim, hidden, dropout)
-        elif use_var == 2:
-            model_class = lambda: MLPEvidential(
-                in_dim, out_dim, hidden, dropout
-            )
+        # elif use_var == 2:
+        #     model_class = lambda: MLPEvidential(
+        #         in_dim, out_dim, hidden, dropout
+        #     )
     # deprecated for this project
     elif model_type == "residual":
         equation = get_push_physics(model_type, obj_shape[:2])
@@ -65,10 +61,10 @@ def load_model(
             model_class = lambda: ResidualPhysicsVar(
                 in_dim, out_dim, equation, hidden, dropout
             )
-        elif use_var == 2:
-            model_class = lambda: ResidualPhysicsEvidential(
-                in_dim, out_dim, equation, hidden, dropout
-            )
+        # elif use_var == 2:
+        #     model_class = lambda: ResidualPhysicsEvidential(
+        #         in_dim, out_dim, equation, hidden, dropout
+        #     )
     elif model_type == "physics":
         equation = get_push_physics(model_type, obj_shape[:2])
         model_class = lambda: Physics(equation)
@@ -81,8 +77,8 @@ def load_model(
         loss_fn = mse_se2_loss  # se2_split_loss
     elif use_var == 1:
         loss_fn = nll_se2_loss  # beta_nll_se2_loss
-    elif use_var == 2:
-        loss_fn = evidential_se2_loss
+    # elif use_var == 2:
+    #     loss_fn = evidential_se2_loss
     score_fn = mse_se2_loss  # se2_split_loss
 
     # Get a wrapper for the model
@@ -233,11 +229,11 @@ def main(obj_name, model_type, use_var=1, n_data=1000, seed=42, plot=False):
 if __name__ == "__main__":
     args = parse_args(
         [
-            ("obj_name", "cracker_box_flipped"),
+            ("obj_name", "real_trash_truck"),
             ("model_type", "mlp"),
-            ("use_var", 0, float),
-            ("n_data", 1000, int),
-            ("seed", 42, int),
+            ("use_var", 1, int),
+            ("n_data", 700, int),
+            ("seed", 41, int),
         ]
     )
     main(args.obj_name, args.model_type, args.use_var, args.n_data, args.seed)

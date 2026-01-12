@@ -1,3 +1,6 @@
+import os, sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from scipy.stats import multivariate_normal
 from itertools import product
@@ -70,6 +73,50 @@ def mvn_box_cdf(lower, upper, mean, cov):
     return total
 
 
+def to_tangent_ranges(ranges):
+    """Convert SE2 ranges to tangent space ranges
+    The tangent space ranges uses conservative inner bound
+    """
+    # Build grid
+    x_l, y_l, yaw_l = ranges[:, 0]
+    x_h, y_h, yaw_h = ranges[:, 1]
+    yaw_l, yaw_h = wrap_to_pi(yaw_l), wrap_to_pi(yaw_h)
+    if (yaw_h - yaw_l) > np.pi:
+        yaw_l, yaw_h = yaw_h - 2 * np.pi, yaw_l
+    grid = np.array([[x_l, y_l], [x_l, y_h], [x_h, y_l], [x_h, y_h]])
+
+    # Build Axis-aligned tangent boxes - Sample yaw angles
+    yaw_samples = np.linspace(yaw_l, yaw_h, 21)
+    x_list, y_list = [], []
+    for yaw in yaw_samples:
+        jac_inv = jac_inv_se2(yaw)
+        pts = (jac_inv @ grid.T).T
+        x_list.append(np.max(np.abs(pts[:, 0])))
+        y_list.append(np.max(np.abs(pts[:, 1])))
+    # Inner = intersection across yaw -> min half-extent
+    x_min = np.min(x_list)
+    y_min = np.min(y_list)
+
+    # Tangent space ranges
+    lower = np.array([-x_min, -y_min, yaw_l])
+    upper = np.array([x_min, y_min, yaw_h])
+    return np.array([lower, upper]).T
+
+
+def jac_inv_se2(w):
+    """Convert yaw to Jacobian inverse"""
+    if abs(w) < 1e-6:
+        return np.eye(2)
+    alpha = w / (2.0 * np.sin(w / 2.0))
+    c = np.cos(w / 2.0)
+    s = np.sin(w / 2.0)
+    return alpha * np.array([[c, s], [-s, c]])
+
+
+def wrap_to_pi(a):
+    return (a + np.pi) % (2 * np.pi) - np.pi
+
+
 if __name__ == "__main__":
     ########## Test Propagation_SE2 ##########
     # initial state
@@ -89,7 +136,7 @@ if __name__ == "__main__":
     mean = prop.mean  # transform
 
     # Use Monte Carlo
-    n_samples = 1000
+    n_samples = 10000
     motions = np.random.multivariate_normal(
         delta, delta_cov, size=(n_samples, n_steps)
     )
@@ -111,32 +158,51 @@ if __name__ == "__main__":
     ########## Test Probability ##########
     # define region
     region = to_se2_transform((1, 1, -1.0))
-    region_range = np.array([[-0.3, 0.3], [-0.3, 0.3], [-0.3, 0.3]])
+
+    se2_lower = np.array([-0.4, -0.4, -0.4])
+    se2_upper = np.array([0.4, 0.4, 0.4])
+    t_ranges = to_tangent_ranges(np.array([se2_lower, se2_upper]).T)
+    lower, upper = t_ranges[:, 0], t_ranges[:, 1]
 
     # Use probabilistic theory
     # express error in region's frame
-    rel_transofrm = inv_se2_transform(region) @ mean
-    rel_ad = adjoint_se2(rel_transofrm)
-    rel_mu = log_se2(rel_transofrm)
+    rel_transform = inv_se2_transform(region) @ mean
+    rel_ad = adjoint_se2(rel_transform)
+    rel_mu = log_se2(rel_transform)
     rel_cov = rel_ad @ cov @ rel_ad.T
-    lower = region_range[:, 0]
-    upper = region_range[:, 1]
+
+    # Box CDF probability
     prob = mvn_box_cdf(lower, upper, rel_mu, rel_cov)
 
     # Use Monte Carlo
     region_inv = inv_se2_transform(region)
-    rel_ts = np.array(
-        [log_se2(region_inv @ trans) for trans in transform_samples]
-    )
-    count = 0
+    rel_transforms = [region_inv @ tr for tr in transform_samples]
+    rel_ts = np.array([log_se2(tr) for tr in rel_transforms])
+
+    t_count = 0
     for t in rel_ts:
         if (
             lower[0] < t[0] < upper[0]
             and lower[1] < t[1] < upper[1]
             and lower[2] < t[2] < upper[2]
         ):
-            count += 1
+            t_count += 1
+
+    s_count = 0
+    rel_vecs = np.array([to_se2_vec(tr) for tr in rel_transforms])
+    rel_vecs[:, 2] = wrap_to_pi(rel_vecs[:, 2])
+    for rel_vec in rel_vecs:
+        if (
+            se2_lower[0] < rel_vec[0] < se2_upper[0]
+            and se2_lower[1] < rel_vec[1] < se2_upper[1]
+            and se2_lower[2] < rel_vec[2] < se2_upper[2]
+        ):
+            s_count += 1
 
     # Check results
-    print("Theory: ", prob, "Monte Carlo: ", count / n_samples)
+    print(
+        f"Theory: {prob:.4f}"
+        + f"\nMC(Tangent): {t_count / n_samples:.4f}"
+        + f"\nMC(SE2): {s_count / n_samples:.4f}"
+    )
     plot_results_3d(rel_ts, rel_mu, rel_cov)

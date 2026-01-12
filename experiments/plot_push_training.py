@@ -1,33 +1,21 @@
 import numpy as np
-from itertools import product
-import torch
-import pandas as pd
 import matplotlib.pyplot as plt
-
-from train_model import load_model, get_push_physics, evaluate_results
-from geometry.object_model import get_obj_shape
-from lie_group.lie_se2 import se2_stats
-from utils import DataLoader
 
 
 def main():
     """Plot active learning results for all objects in 3x2 grid"""
     object_names = [
         "cracker_box_flipped",
-        "mustard_bottle_flipped",
         "banana",
-        "letter_t",
         "master_chef_can_flipped",
-        "school_bus",
         "trash_truck",
-        # "real_cracker_box_flipped",
-        # "real_school_bus",
-        # "real_trash_truck",
+        "real_cracker_box_flipped",
+        "real_trash_truck",
     ]
     model_types = ("mlp",)
-    use_vars = (0.0, 1.0)
+    use_vars = (1, 0)
     n_datas = np.arange(100, 1001, 100)
-    n_exps = 3
+    n_exps = 5
 
     for obj_name in object_names:
         # Seperate each object
@@ -65,7 +53,7 @@ def main():
                     alpha=0.2,
                 )
 
-                if use_var == 0.0:
+                if use_var == 0:
                     continue
                 y2 = results_mean[i, j, :, 1]
                 ax2.plot(n_datas, y2, label=f"{model_type}_{use_var}")

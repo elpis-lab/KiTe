@@ -12,9 +12,9 @@ planners=(
 terminal_weights=(
     0.0
     0.0
-    1.5
+    1.0
 )
-n_reps=10
+n_reps=5
 
 # Split by data usage
 for i in "${!planners[@]}"; do
@@ -23,7 +23,7 @@ for i in "${!planners[@]}"; do
 
     # Run planning.py in the background
     echo "=== Planning with $planner $terminal_weight with $n_reps reps ==="
-    python scripts/planning_flappy.py "$planner" "$terminal_weight" "$n_reps" &
+    python "$script_dir/planning_flappy.py" "$planner" "$terminal_weight" "$n_reps" &
     echo
 done
 

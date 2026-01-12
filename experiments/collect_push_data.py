@@ -70,7 +70,7 @@ def collect_data(obj_name, n_data, random_init=True, push_params=None):
 
     # Get initial object poses
     if random_init:
-        init_states = get_random_se2_states(n_data, obj_shape[2] / 2)
+        init_states = get_random_se2_poses(n_data, obj_shape[2] / 2)
     else:
         init_states = np.tile(
             [0, -0.7, obj_shape[2] / 2, 1, 0, 0, 0], (n_data, 1)
@@ -86,7 +86,7 @@ def collect_data(obj_name, n_data, random_init=True, push_params=None):
             init_states, obj_shape, push_params
         )
 
-    # Start collectin
+    # Start collecting
     for i in tqdm(range(n_rounds)):
         # Push parameters for this round
         init_state = init_states[n_envs * i : n_envs * (i + 1)]
@@ -116,7 +116,7 @@ def collect_repetitive_data(obj_name, n_data, n_reps, random_init=True):
 
 
 ########## Helper functions ##########
-def get_random_se2_states(
+def get_random_se2_poses(
     n_envs,
     z=0,
     pos_range=((-0.2, 0.2), (-0.9, -0.5)),

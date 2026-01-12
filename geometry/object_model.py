@@ -1,6 +1,6 @@
 import numpy as np
 import trimesh
-from .point_cloud import ObjectPointCloud
+from geometry.point_cloud import ObjectPointCloud
 
 
 def get_obj_shape(obj_name):

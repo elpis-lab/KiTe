@@ -1,3 +1,6 @@
+import os, sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import math
 import numpy as np
 import matplotlib.pyplot as plt
@@ -6,8 +9,11 @@ import ompl.base as ob
 import ompl.control as oc
 import ompl.util as ou
 
+from planning.planning_utils import point_in_rects, point_dist_to_rects
+from planning.planning_utils import draw_circle, draw_rect, draw_gradient_rect
 
-########## Flappy Bird Constants ##########
+
+########## Flappy Bird Environment ##########
 # Flappy Bird dynamics constants
 # X constant horizontal velocity (px/frame)
 VX = 5.0
@@ -21,7 +27,6 @@ VY_MIN, VY_MAX = -10.0, 10.0
 WIDTH, HEIGHT = 720, 480
 
 
-########## Flappy Bird Environment ##########
 def generate_flappy_env(
     pipe_gap=120 - 24, pipe_width=52 + 32, pipe_spacing=192
 ):
@@ -53,13 +58,15 @@ def generate_flappy_env(
         raise ValueError("pipe_gap too large for HEIGHT.")
     # Generate random gap for each pipe
     for cx in pipe_centers:
-        xmin = cx - pipe_width / 2.0
-        xmax = cx + pipe_width / 2.0
         gap_top = np.random.randint(gap_top_min, gap_top_max)
         gap_bottom = gap_top + pipe_gap
-        # xmin, xmax, ymin, ymax
-        obstacles.append((xmin, xmax, 0.0, float(gap_top)))
-        obstacles.append((xmin, xmax, float(gap_bottom), float(HEIGHT)))
+        # lower pipe: y in [0, gap_top]
+        lower_cy = 0.5 * gap_top
+        obstacles.append((cx, lower_cy, pipe_width, gap_top))
+        # upper pipe: y in [gap_bottom, HEIGHT]
+        upper_h = HEIGHT - gap_bottom
+        upper_cy = gap_bottom + 0.5 * upper_h
+        obstacles.append((cx, upper_cy, pipe_width, upper_h))
 
     # Compute start / goal
     # fixed start
@@ -72,53 +79,18 @@ def generate_flappy_env(
 
     return {
         "start": start,
-        "goal_center": goal_center,
+        "goal": goal_center,
         "goal_size": goal_size,
         "obstacles": obstacles,
     }
 
 
 ########## Visualization ##########
-def draw_gradient_rect(
-    ax, center, width, height, n_strips=100, cmap="Greens", alpha=0.8
-):
-    cm = plt.get_cmap(cmap)
-    cx, cy = center
-
-    x0 = cx - width / 2.0
-    y0 = cy - height / 2.0
-    strip_w = width / n_strips
-    strip_h = height / n_strips
-    for iy in range(n_strips):
-        y = y0 + iy * strip_h
-        y_mid = y + 0.5 * strip_h
-        for ix in range(n_strips):
-            x = x0 + ix * strip_w
-            x_mid = x + 0.5 * strip_w
-
-            # square-style normalized distance
-            d = math.hypot(x_mid - cx, y_mid - cy) / (width / 2.0)
-            d = min(1.0, d)
-            color = cm(0.2 + 0.5 * (1 - d))
-            rect = plt.Rectangle(
-                (x, y), strip_w, strip_h, color=color, alpha=alpha, linewidth=0
-            )
-            ax.add_patch(rect)
-
-
-def visualize_flappy_env(
-    env, paths=None, show=True, title="Flappy Bird Environment"
-):
-    """
-    Visualize:
-      - pine obstacles
-      - Start point (small circle)
-      - Goal region (gradient circle)
-      - Optional solution path
-    """
+def visualize_flappy_env(env, paths=None, title="Flappy Bird Environment"):
+    """Visualize Flappy Bird environment"""
     obstacles = env["obstacles"]
     start = env["start"]
-    goal_center = env["goal_center"]
+    goal = env["goal"]
     goal_size = env["goal_size"]
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -126,19 +98,12 @@ def visualize_flappy_env(
     ax.set_ylim(0, HEIGHT)
     ax.set_aspect("equal", adjustable="box")
 
-    # Start
-    sx, sy, _ = start
-    start_circle = plt.Circle((sx, sy), 5.0, color="blue", zorder=5)
-    ax.add_patch(start_circle)
     # Goal region (gradient)
-    draw_gradient_rect(ax, goal_center, goal_size, goal_size)
-
+    draw_gradient_rect(ax, *goal, goal_size, goal_size, label="Goal Region")
     # Draw obstacles
-    for xmin, xmax, ymin, ymax in obstacles:
-        rect = plt.Rectangle(
-            (xmin, ymin), xmax - xmin, ymax - ymin, color="black", alpha=0.6
-        )
-        ax.add_patch(rect)
+    for i, (cx, cy, w, h) in enumerate(obstacles):
+        label = "Obstacle" if i == 0 else None
+        draw_rect(ax, cx, cy, w, h, 0, "black", alpha=0.6, label=label)
 
     # Solution path (if any)
     if paths:
@@ -157,42 +122,16 @@ def visualize_flappy_env(
                 alpha=item.get("alpha", 0.9),
                 color=item.get("color", None),
             )
-        # Only show legend if at least one label exists
-        handles, labels = ax.get_legend_handles_labels()
-        if any(lbl is not None and lbl != "" for lbl in labels):
-            ax.legend(loc="upper left")
 
+    # Start
+    sx, sy, _ = start
+    draw_circle(ax, sx, sy, 10.0, "C9", label="Start")
+
+    ax.legend(loc="upper left")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_title(title)
-
-    if show:
-        plt.show()
     return fig, ax
-
-
-########## Validity Checker ##########
-def point_in_rectangles(x, y, rects):
-    """
-    Check if (x, y) lies inside any axis-aligned rectangle in rects.
-    Each rectangle is (xmin, xmax, ymin, ymax).
-    """
-    for xmin, xmax, ymin, ymax in rects:
-        if xmin <= x <= xmax and ymin <= y <= ymax:
-            return True
-    return False
-
-
-def dist_to_rectangles(x, y, rects):
-    """
-    Compute the minimum distance from (x, y) to any axis-aligned rectangles.
-    Rects are n by 4 numpy array with columns (xmin, xmax, ymin, ymax).
-    """
-    rects = np.asarray(rects)
-    dx = np.maximum(np.maximum(rects[:, 0] - x, 0.0), x - rects[:, 1])
-    dy = np.maximum(np.maximum(rects[:, 2] - y, 0.0), y - rects[:, 3])
-    dists = np.hypot(dx, dy)
-    return np.min(dists)
 
 
 ########## OMPL Main ##########
@@ -269,6 +208,7 @@ class FlappyPlanner:
         self.si.setPropagationStepSize(1.0)
         self.si.setMinMaxControlDuration(1, 1)
 
+    # Validity checkers
     def is_state_valid(self, state):
         """Check if the state is in the bounds"""
         # Not in bounds
@@ -276,7 +216,7 @@ class FlappyPlanner:
         if not in_bounds:
             return False
         # In collision with obstacles (pines)
-        if point_in_rectangles(state[0], state[1], self.obstacles):
+        if point_in_rects(state[0], state[1], self.obstacles):
             return False
         return True
 
@@ -288,10 +228,11 @@ class FlappyPlanner:
         d_bound = min(x - 0, WIDTH - x, y - 0, HEIGHT - y)
         d_bound = float("inf")
         # Distance to closest obstacle
-        d_obs = dist_to_rectangles(x, y, self.obstacles)
+        d_obs = point_dist_to_rects(x, y, self.obstacles)
         # return d_obs
         return min(d_bound, d_obs)
 
+    # Planner
     def plan(
         self,
         start,
@@ -339,7 +280,7 @@ class FlappyPlanner:
 
             # no new solution found
             if (
-                status.asString() == "Approximate solution"
+                status.asString() != "Exact solution"
                 or not self.ss.haveSolutionPath()
             ):
                 if verbose:
@@ -443,10 +384,9 @@ class FlappyGoal(ob.GoalState):
         super().__init__(si)
         self.goal = goal  # (x, y)
         self.goal_size = goal_size
-        goal = ob.State(si.getStateSpace())
-        goal()[0] = float(goal[0])
-        goal()[1] = float(goal[1])
-        self.setState(goal)
+        goal_stat = ob.State(si.getStateSpace())
+        goal_stat()[0], goal_stat()[1] = float(goal[0]), float(goal[1])
+        self.setState(goal_stat)
         self.setThreshold(0.01)
 
     def distanceGoal(self, state):
@@ -470,14 +410,14 @@ class FlappyOptimizationObjective(ob.StateCostIntegralObjective):
         self,
         si,
         clearance_fn,
-        goal_center,
+        goal,
         terminal_weight=1.0,
         min_clearance=1e-2,
     ):
         """Initialize the optimization objective for flappy bird"""
         super().__init__(si, True)
         self.clearance_fn = clearance_fn
-        self.goal_center = goal_center
+        self.goal = goal
         self.terminal_weight = terminal_weight
         self.min_clearance = min_clearance
 
@@ -494,8 +434,8 @@ class FlappyOptimizationObjective(ob.StateCostIntegralObjective):
         return ob.Cost(cost)
 
     def dist_to_goal(self, pos):
-        dx = float(pos[0]) - self.goal_center[0]
-        dy = float(pos[1]) - self.goal_center[1]
+        dx = float(pos[0]) - self.goal[0]
+        dy = float(pos[1]) - self.goal[1]
         return math.hypot(dx, dy)
 
 
@@ -506,15 +446,16 @@ if __name__ == "__main__":
     np.random.seed(10)
 
     env = generate_flappy_env()
-    # obstacles = np.load("data/planning_flappy_obstacles.npy")
-    # env["obstacles"] = obstacles[0]
-    # visualize_flappy_env(env, paths=None)
+    # envs = np.load("data/planning_flappy_envs.npy")
+    # env = envs[0]
+    visualize_flappy_env(env)
+    plt.show()
 
-    planner = FlappyPlanner(env["obstacles"], "aorrt", terminal_weight=1.2)
+    planner = FlappyPlanner(env["obstacles"], "sst", terminal_weight=1.0)
     # times = list(np.linspace(0.1, 10.0, 100))
-    times = [0.092, 0.4, 10.0]
+    times = [0.1, 0.4, 10.0]
     states, controls, costs = planner.plan(
-        env["start"], env["goal_center"], env["goal_size"], times
+        env["start"], env["goal"], env["goal_size"], times
     )
     for i in range(len(times)):
         print(f"{times[i]:.2f}: {costs[i][0]:.2f}, {costs[i][1]:.2f}")
@@ -524,5 +465,4 @@ if __name__ == "__main__":
         # [{"path": states[0], "color": "red"}],
         [{"path": states[i]} for i in range(len(times))],
     )
-    plt.plot(times, [costs[i][0] + costs[i][1] for i in range(len(times))])
     plt.show()

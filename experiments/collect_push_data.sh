@@ -7,18 +7,18 @@ start_time=$(date +%s)
 # List of object names
 objs=(
     cracker_box_flipped
-    mustard_bottle_flipped
     banana
-    letter_t
     master_chef_can_flipped
     trash_truck
+    real_cracker_box_flipped
+    real_trash_truck
 )
 
 for obj in "${objs[@]}"; do
     echo "=== Processing $obj ==="
 
     # Start collect_data.py in the background
-    python "$script_dir/collect_data.py" "$obj" &
+    python "$script_dir/collect_push_data.py" "$obj" &
     wait
 
     echo "=== Done with $obj ==="

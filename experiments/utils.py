@@ -3,6 +3,7 @@ import warnings
 import numpy as np
 import torch
 import argparse
+from planning.planning_utils import set_ompl_seed
 
 # for better printing
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -13,6 +14,7 @@ def set_seed(seed):
     """Set seed for reproducibility"""
     torch.manual_seed(seed)
     np.random.seed(seed)
+    set_ompl_seed(seed)
 
 
 def parse_args(args):
