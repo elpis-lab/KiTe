@@ -302,11 +302,13 @@ def xyzw_to_wxyz(quat: np.ndarray) -> np.ndarray:
 
 
 # Some other utils
-def angle_diff(a: float, b: float) -> float:
+def angle_diff(
+    a: float | np.ndarray, b: float | np.ndarray
+) -> float | np.ndarray:
     """Compute the signed angle difference between two angles"""
     return (a - b + np.pi) % (2 * np.pi) - np.pi
 
 
-def wrap_to_pi(angle: float) -> float:
+def wrap_to_pi(angle: float | np.ndarray) -> float | np.ndarray:
     """Wrap an angle to the range [-pi, pi]"""
     return (angle + np.pi) % (2 * np.pi) - np.pi

@@ -1,0 +1,26 @@
+<mujoco model="mjc_sim">
+  <compiler angle="radian" autolimits="true" />
+  <size njmax="500" nconmax="100"/>
+
+  <visual>
+    <global offwidth="1920" offheight="1080" />
+    <headlight ambient="0.6 0.6 0.6" diffuse="0.5 0.5 0.5" specular="0.2 0.2 0.2"/>
+  </visual>
+
+  <!-- Car -->
+  <include file="assets/car.xml"/>
+
+  <!-- Floor -->
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="10 10" texuniform="true" reflectance=".2"/>
+  </asset>
+  <worldbody>
+    <geom friction=".5 .005 .0001" name="floor" size="0 0 .25" type="plane" material="grid" condim="3"/>
+  </worldbody>
+
+  <!-- For debugging -->
+  <worldbody>
+    <site name="marker" pos="0.0 0.0 -1.0" type="sphere" size="0.02" rgba="1 0 0 0.7"/>
+  </worldbody>
+</mujoco>

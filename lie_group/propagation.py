@@ -10,6 +10,40 @@ from lie_group.lie_se2 import to_se2_vec, to_se2_transform, inv_se2_transform
 from lie_group.plot_utils import plot_results_3d
 
 
+def se2_error(s1, s2, weight=None):
+    """Get the delta error for SE2 Pose."""
+    t1 = to_se2_transform(s1)
+    t2 = to_se2_transform(s2)
+    err_mat = inv_se2_transform(t1) @ t2
+    delta = log_se2(err_mat)  # (N, 3)
+
+    if weight is None:
+        return delta
+    elif isinstance(weight, np.ndarray):
+        if weight.shape == (3, 3):
+            return weight @ delta
+        elif len(weight) == 3:
+            return np.diag(weight) @ delta
+    elif isinstance(weight, float):
+        return np.diag([1, 1, weight]) @ delta
+    elif isinstance(weight, list):
+        return np.diag(weight) @ delta
+
+    else:
+        raise ValueError(f"Invalid weight type: {type(weight)}")
+
+
+def propagate_cov(delta, cov, delta_cov):
+    """Propagate the covariance of the SE(2) state."""
+    # action covariance (right Jacobian(delta))
+    jac_r = right_jacobian_se2(delta)
+    # state covariance (inverse of Adjoint(delta))
+    adj = adjoint_se2(exp_se2(-delta))
+    # Propagate error covariance
+    cov = adj @ cov @ adj.T + jac_r @ delta_cov @ jac_r.T
+    return cov
+
+
 class Propagation_SE2:
     """
     A class that carries out only the 'prediction' step in regular IEKF,
@@ -44,12 +78,7 @@ class Propagation_SE2:
         self.mean = self.mean @ t_delta
 
         # Propagate covariance
-        # action covariance (right Jacobian(delta))
-        jac_r = right_jacobian_se2(delta)
-        # state covariance (inverse of Adjoint(delta))
-        adj = adjoint_se2(exp_se2(-delta))
-        # Propagate error covariance
-        self.cov = adj @ self.cov @ adj.T + jac_r @ delta_cov @ jac_r.T
+        self.cov = propagate_cov(delta, self.cov, delta_cov)
 
     def get_end_state(self):
         """Get the (x, y, theta) from the SE(2) state with se(2) covariance."""

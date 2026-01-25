@@ -1,0 +1,83 @@
+<mujoco model="car">
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <mesh name="car_body" file="car/car_body.obj" />
+    <mesh name="wheel" file="car/car_wheel.obj"/>
+    <texture name="texture" type="2d" file="car/texture_map.png" />
+    <material name="material" texture="texture" />
+  </asset>
+
+  <default>
+    <default class="wheel">
+      <!-- <geom type="cylinder" size="0.036 0.015" euler="1.5708 0 0" friction="2 0.005 0.0001" mass="1"/> -->
+      <geom type="ellipsoid" size="0.036 0.015 0.036" friction="2 0.005 0.0001" mass="1"/>
+    </default>
+    <default class="wheel_mesh">
+      <geom type="mesh" mesh="wheel" material="material" contype="0" conaffinity="0"/>
+    </default>
+    <default class="steering">
+      <joint type="hinge" axis="0 0 1" limited="true" frictionloss="0.01" damping="0.001" armature="0.0002" range="-0.38 0.38"/>
+    </default>
+    <default class="throttle">
+      <joint type="hinge" axis="0 1 0" frictionloss="0.001" damping="0.01" armature="0.01" limited="false"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="car" pos="0.15 0.0 0.0" euler="0 0 0.0">
+      <joint type="free"/>
+      <geom mesh="car_body" pos="0 0 0" type="mesh" material="material" contype="0" conaffinity="0" group="2" mass="10"/>
+      <!-- <geom type="box" size="0.25 0.11 0.07" pos="0 0 0.08" group="3"/> -->
+
+      <body name="steering_wheel" pos="0.15 0 0.036">
+        <joint class="steering" name="steering_wheel"/>
+        <geom class="wheel" contype="0" conaffinity="0" group="2" mass="0.01" rgba="0 0 0 0.01"/>
+      </body>
+
+      <body name="wheel_fl" pos="0.15 0.085 0.036">
+        <joint class="steering" name="wheel_fl_steering"/>
+        <joint class="throttle" name="wheel_fl_throttle"/>
+        <geom class="wheel" group="3"/>
+        <geom class="wheel_mesh" group="2"/>
+      </body>
+      <body name="wheel_fr" pos="0.15 -0.085 0.036">
+        <joint class="steering" name="wheel_fr_steering"/>
+        <joint class="throttle" name="wheel_fr_throttle"/>
+        <geom class="wheel" group="3"/>
+        <geom class="wheel_mesh" euler="0 0 3.14159" group="2"/>
+      </body>
+      <body name="wheel_bl" pos="-0.15 0.085 0.036">
+        <joint class="throttle" name="wheel_bl_throttle"/>
+        <geom class="wheel" group="3"/>
+        <geom class="wheel_mesh" group="2"/>
+      </body>
+      <body name="wheel_br" pos="-0.15 -0.085 0.036">
+        <joint class="throttle" name="wheel_br_throttle"/>
+        <geom class="wheel" group="3"/>
+        <geom class="wheel_mesh" euler="0 0 3.14159" group="2"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position class="steering" kp="25.0" name="steering_pos" joint="steering_wheel"/>
+    <velocity kv="30" forcelimited="true" forcerange="-500 500" name="throttle_velocity" tendon="throttle"/>
+  </actuator>
+
+  <equality>
+    <!-- taylor expansion of delta_l = arctan(L/(L/tan(delta) - W/2)) with L, W in reference to kinematic car model -->
+    <joint joint1="wheel_fl_steering" joint2="steering_wheel" polycoef="0 1 0.283334 0.080278 -0.0717"/>
+    <!-- taylor expansion of delta_r = arctan(L/(L/tan(delta) + W/2)) with L,W in reference to kinematic car model -->
+    <joint joint1="wheel_fr_steering" joint2="steering_wheel" polycoef="0 1 -0.283334 0.080278 0.0717"/>
+  </equality>
+
+  <tendon>
+    <fixed name="throttle">
+      <joint joint="wheel_fl_throttle" coef="0.25"/>
+      <joint joint="wheel_fr_throttle" coef="0.25"/>
+      <joint joint="wheel_bl_throttle" coef="0.25"/>
+      <joint joint="wheel_br_throttle" coef="0.25"/>
+    </fixed>
+  </tendon>
+</mujoco>
