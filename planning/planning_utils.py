@@ -13,6 +13,24 @@ def set_ompl_seed(seed):
     ou.RNG.setSeed(seed)
 
 
+def vec_to_cov(vector):
+    """Convert vector to covariance matrix"""
+    return np.array(
+        [
+            [vector[0], vector[1], vector[2]],
+            [vector[1], vector[3], vector[4]],
+            [vector[2], vector[4], vector[5]],
+        ]
+    )
+
+
+def cov_to_vec(cov):
+    """Convert covariance matrix to vector"""
+    return np.array(
+        [cov[0, 0], cov[0, 1], cov[0, 2], cov[1, 1], cov[1, 2], cov[2, 2]]
+    )
+
+
 # Validity Check
 # point and rectangles
 def point_in_rects(x, y, rects):
@@ -125,6 +143,85 @@ def rects_circles_in_collision(pose, shape, circles):
     return hits
 
 
+# rectangles and rectangles
+def rects_rects_in_collision(pose, shape, rects):
+    """
+    Check if a rectangle object is in collision with a list of rectangles.
+    The pose is a SE2 pose (x, y, yaw) and shape is a tuple (w, h).
+    The rects is a list of rectangles with columns (cx, cy, w, h).
+    """
+    if len(rects) == 0:
+        return False
+
+    rects = np.asarray(rects, dtype=float)
+    r_cx = rects[:, 0]
+    r_cy = rects[:, 1]
+    r_bx = 0.5 * rects[:, 2]  # half width
+    r_by = 0.5 * rects[:, 3]  # half height
+
+    pose = np.asarray(pose, dtype=float)
+    single = pose.ndim == 1
+    if single:
+        pose = pose[None, :]
+
+    x = pose[:, 0]
+    y = pose[:, 1]
+    yaw = pose[:, 2]
+
+    w, h = shape[:2]
+    a0 = 0.5 * w  # hx
+    a1 = 0.5 * h  # hy
+
+    # Relative translation from object center to each rect center in world frame
+    # (N, M)
+    dx = r_cx[None, :] - x[:, None]
+    dy = r_cy[None, :] - y[:, None]
+    # Object local axes in world:
+    # u = (cos, sin), v = (-sin, cos)
+    c = np.cos(yaw)[:, None]  # (N,1)
+    s = np.sin(yaw)[:, None]  # (N,1)
+
+    # Rotation terms between object axes (u,v) and world axes (ex, ey)
+    # R = [[u·ex, u·ey],
+    #      [v·ex, v·ey]] = [[c, s],
+    #                      [-s, c]]
+    eps = 1e-12  # Add tiny epsilon to avoid issues in near-parallel cases
+    abs_tf00 = np.abs(c) + eps
+    abs_tf01 = np.abs(s) + eps
+    abs_tf10 = np.abs(-s) + eps
+    abs_tf11 = np.abs(c) + eps
+
+    # Projections of T onto object axes T·u and T·v
+    # (N, M)
+    tf_u = c * dx + s * dy
+    tf_v = -s * dx + c * dy
+
+    # SAT tests (OBB vs AABB), 4 separating axes: u, v, ex, ey
+    # 1) axis u
+    ra = a0
+    rb = r_bx[None, :] * abs_tf00 + r_by[None, :] * abs_tf01
+    sep_u = np.abs(tf_u) > (ra + rb)
+    # 2) axis v
+    ra = a1
+    rb = r_bx[None, :] * abs_tf10 + r_by[None, :] * abs_tf11
+    sep_v = np.abs(tf_v) > (ra + rb)
+    # 3) axis ex (world x)
+    ra = a0 * abs_tf00 + a1 * abs_tf10
+    rb = r_bx[None, :]
+    sep_ex = np.abs(dx) > (ra + rb)
+    # 4) axis ey (world y)
+    ra = a0 * abs_tf01 + a1 * abs_tf11
+    rb = r_by[None, :]
+    sep_ey = np.abs(dy) > (ra + rb)
+
+    # Collision if NOT separated on any axis
+    separated = sep_u | sep_v | sep_ex | sep_ey
+    collide_nm = ~separated
+    hits = np.any(collide_nm, axis=1)
+
+    return hits[0] if single else hits
+
+
 # Plotting
 def draw_circle(ax, x, y, r, color="r", alpha=0.5, linewidth=0, label=None):
     """Draw a circle on a given axis, with proper legend support."""
@@ -148,7 +245,7 @@ def draw_gradient_circle(
     for i in range(n_rings, 0, -1):
         r = radius * i / n_rings
         color = cm(0.25 + 0.5 * (1 - i / n_rings))
-        lab = label if i == 1 else None
+        lab = label if i == n_rings // 2 else None
         # first draw a white circle on top to cover the previous circle
         if i != n_rings:
             draw_circle(ax, cx, cy, r, color="w", alpha=alpha)
@@ -288,3 +385,11 @@ def draw_cov_ellipse(
     )
     ax.add_patch(e)
     return e
+
+
+def world_2d_cov(yaw, cov):
+    """Local 2D covariance to world covariance given rotation yaw"""
+    c, s = np.cos(yaw), np.sin(yaw)
+    rot = np.array([[c, -s], [s, c]])
+    cov_body = np.asarray(cov)[:2, :2]
+    return rot @ cov_body @ rot.T

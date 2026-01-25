@@ -18,7 +18,7 @@ from geometry.object_model import get_obj_shape
 from utils import parse_args, set_seed
 from lie_group.lie_se2 import se2_stats
 
-from simulation.mujoco_sim import Sim
+from simulation.push_sim import Sim
 
 
 def execute_push(sim: Sim, ik, init_state, t_path, ws_path, dt):
@@ -43,7 +43,7 @@ def execute_push(sim: Sim, ik, init_state, t_path, ws_path, dt):
 def collect_data(obj_name, n_data, random_init=True, push_params=None):
     """Collect n_data for obj_name"""
     # Sim class
-    xml = open("simulation/mujoco_sim.xml").read()
+    xml = open("simulation/push_sim.xml").read()
     xml = xml.replace("object_name", obj_name)
     sim = Sim(
         xml,

@@ -13,6 +13,7 @@ from active_learning.kernel import get_posteriors
 from lie_group.lie_se2 import adjoint_se2, log_se2
 from lie_group.lie_se2 import to_se2_transform, inv_se2_transform
 
+from planning.planning_utils import vec_to_cov, world_2d_cov
 from planning.planning_utils import rects_circles_in_collision
 from planning.planning_utils import draw_rect, draw_circle, draw_cov_ellipse
 from planning.planning_utils import draw_gradient_circle
@@ -89,7 +90,7 @@ def visualize_push_env(
     # draw_rect(ax, 0, 0, 0.2, 0.2, 0, "gray", alpha=0.5, label="Robot")
 
     # Goal
-    draw_gradient_circle(ax, goal[:2], goal_size, label="Goal Region")
+    draw_gradient_circle(ax, goal[:2], goal_size, alpha=1, label="Goal Region")
     # Obstacles
     if len(obstacles) > 0:
         obstacles = np.asarray(obstacles)
@@ -103,29 +104,16 @@ def visualize_push_env(
 
     # Planned path (x, y)
     if path is not None:
-        ax.plot(path[:, 0], path[:, 1], "o-", color="b", label="Planned Path")
-        if obj_shape is not None:
-            for state in path:
-                x, y, yaw = state[:3]
-                draw_rect(ax, x, y, w, h, yaw, "b", alpha=0.3)
+        ax.plot(path[:, 0], path[:, 1], "o-", color="C0", label="Planned Path")
 
-        # if covariance provided, plot belief path
-        def world_cov_xy(yaw, cov):
-            """Local covariance to world covariance"""
-            c, s = np.cos(yaw), np.sin(yaw)
-            rot = np.array([[c, -s], [s, c]])
-            cov_body = np.asarray(cov)[:2, :2]
-            return rot @ cov_body @ rot.T
-
+        # if covariance provided, plot
         if path.shape[1] > 3:
             for i, state in enumerate(path):
                 x, y, yaw = state[:3]
-                cov_local = world_cov_xy(
-                    yaw, SE2PushOptimizationObjective.vec_to_cov(state[3:])
-                )
+                cov_world = world_2d_cov(yaw, vec_to_cov(state[3:]))
                 label = "Belief" if i == 0 else None
                 draw_cov_ellipse(
-                    ax, (x, y), cov_local, 1, "b", 0.2, label=label
+                    ax, (x, y), cov_world, 2.0, "C9", 0.5, label=label
                 )
 
     # Executed path (x, y)
@@ -134,16 +122,24 @@ def visualize_push_env(
             exec_path[:, 0],
             exec_path[:, 1],
             "o-",
-            color="g",
+            color="C5",
             label="Actual Path",
         )
-        if obj_shape is not None:
+
+    # Object
+    if obj_shape is not None:
+        if path is not None:
+            for state in path:
+                x, y, yaw = state[:3]
+                draw_rect(ax, x, y, w, h, yaw, "C0", alpha=0.1)
+
+        if exec_path is not None:
             for state in exec_path:
                 x, y, yaw = state[:3]
-                draw_rect(ax, x, y, w, h, yaw, "g", alpha=0.3)
+                draw_rect(ax, x, y, w, h, yaw, "C5", alpha=0.1)
 
     # Start
-    draw_circle(ax, start[0], start[1], 0.01, "C9", label="Start")
+    draw_circle(ax, start[0], start[1], 0.01, "C8", label="Start")
 
     ax.set_axisbelow(True)
     ax.grid(True, zorder=0)
@@ -264,7 +260,7 @@ class SE2PushPlanner:
 
         # Optimization objective (set later with goal)
         # obj = SE2PushOptimizationObjective(
-        #     self.si, goal, self.belief, self.terminal_weight
+        #     self.si, goal, belief, self.terminal_weight
         # )
         # self.pdef.setOptimizationObjective(obj)
 
@@ -807,8 +803,8 @@ class SE2PushOptimizationObjective(ob.PathLengthOptimizationObjective):
         s1_x, s1_y, s1_yaw = s1.getX(), s1.getY(), s1.getYaw()
         s2_x, s2_y, s2_yaw = s2.getX(), s2.getY(), s2.getYaw()
         if self.belief:
-            cov1 = self.vec_to_cov([s1.getCovariance(i) for i in range(6)])
-            cov2 = self.vec_to_cov([s2.getCovariance(i) for i in range(6)])
+            cov1 = vec_to_cov([s1.getCovariance(i) for i in range(6)])
+            cov2 = vec_to_cov([s2.getCovariance(i) for i in range(6)])
         else:
             cov1 = None
             cov2 = None
@@ -848,7 +844,7 @@ class SE2PushOptimizationObjective(ob.PathLengthOptimizationObjective):
         x, y, yaw = state.getX(), state.getY(), state.getYaw()
         # if in belief space, include covariance for Wasserstein distance
         if self.belief:
-            cov = self.vec_to_cov([state.getCovariance(i) for i in range(6)])
+            cov = vec_to_cov([state.getCovariance(i) for i in range(6)])
         else:
             cov = None
 
@@ -877,17 +873,6 @@ class SE2PushOptimizationObjective(ob.PathLengthOptimizationObjective):
         eigenvalues = np.linalg.eigvalsh(sqrt_cov1 @ cov2 @ sqrt_cov1)
         sqrt_tr = np.sum(np.sqrt(eigenvalues))
         return np.trace(cov1) + np.trace(cov2) - 2 * sqrt_tr
-
-    @staticmethod
-    def vec_to_cov(vector):
-        """Convert vector to covariance matrix"""
-        return np.array(
-            [
-                [vector[0], vector[1], vector[2]],
-                [vector[1], vector[3], vector[4]],
-                [vector[2], vector[4], vector[5]],
-            ]
-        )
 
 
 ########## Test ##########

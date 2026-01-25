@@ -36,19 +36,6 @@ def parse_args(args):
     return args
 
 
-def get_names(object_name):
-    """A simple function to extract where the model and data name should be"""
-    if "real" in object_name:
-        model_name = object_name[5:]
-        data_name = object_name + "_2000"  # real world data has 2000 samples
-        rep_data_name = object_name + "_100x10"
-    else:
-        model_name = object_name
-        data_name = object_name + "_10000"  # sim data has 10000 samples
-        rep_data_name = object_name + "_1000x10"
-    return model_name, data_name, rep_data_name
-
-
 class DataLoader:
     """Class for loading data and splitting them"""
 
@@ -112,3 +99,16 @@ class DataLoader:
         datasets["x_test"] = x_test
         datasets["y_test"] = y_test
         return datasets
+
+
+def get_names(object_name):
+    """A simple function to extract where the model and data name should be"""
+    if "real" in object_name:
+        model_name = object_name[5:]
+        data_name = object_name + "_2000"  # real world data has 2000 samples
+        rep_data_name = object_name + "_100x10"
+    else:
+        model_name = object_name
+        data_name = object_name + "_10000"  # sim data has 10000 samples
+        rep_data_name = object_name + "_1000x10"
+    return model_name, data_name, rep_data_name

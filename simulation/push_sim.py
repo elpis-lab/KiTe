@@ -75,13 +75,17 @@ class Sim:
         ), f"dt must be a multiple of sim time step: {time_step}"
 
         # Prepare parallelization
-        self.n_envs = n_envs
-        self.mj_datas = [mujoco.MjData(self.mj_model) for _ in range(n_envs)]
-        self.mj_datas_qpos = [mj_data.qpos for mj_data in self.mj_datas]
+        self.n_envs = int(n_envs)
+        self.mj_datas = [
+            mujoco.MjData(self.mj_model) for _ in range(self.n_envs)
+        ]
+        # save pointer to each qpos as a numpy object array
+        self.mj_datas_qpos = np.empty(self.n_envs, dtype=object)
+        self.mj_datas_qpos[:] = [d.qpos for d in self.mj_datas]
         self.executor = ThreadPoolExecutor(max_workers=self.n_envs)
 
-        # Store the initial state for reset
-        self.init_qpos = np.array(self.mj_datas_qpos)
+        # Store the initial state for reset (make a copy of the values)
+        self.init_qpos = np.stack(self.mj_datas_qpos)
 
     def get_sim_info(self):
         """Return simulation infomation"""
@@ -147,6 +151,7 @@ class Sim:
             mj_data.ctrl[:] = self.init_qpos[
                 i, : self.robot_joint_dof + self.robot_ee_dof
             ]
+            mujoco.mj_forward(self.mj_model, self.mj_datas[i])
         # Wait for the simulation to stabilize
         self.run_sim(wait_time)
 
@@ -164,12 +169,10 @@ class Sim:
 
     def get_obj_pose(self, obj_idx=0, env_idx=None):
         """Return object information"""
-        _, env_idx = self._preprocess_values(
+        _, env_idx = self._preprocess_env_idx(
             np.zeros((self.n_envs, 1)), env_idx
         )
-        return np.array(self.mj_datas_qpos)[
-            np.ix_(env_idx, self.obj_idxs[obj_idx])
-        ]
+        return np.stack(self.mj_datas_qpos[env_idx])[:, self.obj_idxs[obj_idx]]
 
     ########## Robot-related functions ##########
     def set_robot_init_joints(self, joints, ee_joints=None, env_idx=None):
@@ -182,19 +185,17 @@ class Sim:
 
     def get_robot_joints(self, env_idx=None):
         """Get the robot joint positions"""
-        _, env_idx = self._preprocess_values(
+        _, env_idx = self._preprocess_env_idx(
             np.zeros((self.n_envs, 1)), env_idx
         )
-        return np.array(self.mj_datas_qpos)[
-            np.ix_(env_idx, self.robot_joint_idx)
-        ]
+        return np.stack(self.mj_datas_qpos[env_idx])[:, self.robot_joint_idx]
 
     def get_robot_ee(self, env_idx=None):
         """Get the robot end-effector positions"""
-        _, env_idx = self._preprocess_values(
+        _, env_idx = self._preprocess_env_idx(
             np.zeros((self.n_envs, 1)), env_idx
         )
-        return np.array(self.mj_datas_qpos)[np.ix_(env_idx, self.robot_ee_idx)]
+        return np.stack(self.mj_datas_qpos[env_idx])[:, self.robot_ee_idx]
 
     def move_ee(self, ee, env_idx=None, wait_time=0.0):
         """Set the robot end-effector positions"""
@@ -240,17 +241,18 @@ class Sim:
             waypoints: the target joint positions at each time step
                        defined as (num_time_step, num_envs, num_joints)
         """
+        waypoints = np.asarray(waypoints)
         n_run_steps, n_trials, n_joint = waypoints.shape
         assert n_joint == self.robot_joint_dof, "Invalid joint dimension"
         assert n_trials <= self.n_envs, (
-            "required number of execution should not be larger"
+            "required number of execution should not be larger "
             + "than the number of simulation environment"
         )
         env_idx = np.arange(n_trials)
         extra_steps = int(wait_time // self.dt)
 
         # Save the initial qpos first
-        init_qpos = np.array(self.mj_datas_qpos)[:n_trials]
+        init_qpos = np.stack(self.mj_datas_qpos[:n_trials])
         if return_intermediate:
             intermediate_qpos = np.zeros(
                 (1 + n_run_steps + extra_steps, n_trials, init_qpos.shape[1])
@@ -272,13 +274,13 @@ class Sim:
         def thread_stabilize_fn(env_i, step_i, mj_model, mj_data):
             """Thread function to be run in parallel"""
             if return_intermediate:
-                intermediate_qpos[step_i, env_i] = mj_data.qpos
+                intermediate_qpos[n_run_steps + step_i, env_i] = mj_data.qpos
 
         # Run for extra time to stabilize the simulation
         self.step_n(extra_steps, thread_fn=thread_stabilize_fn)
 
         # Get the last qpos
-        last_qpos = np.array(self.mj_datas_qpos)[:n_trials]
+        last_qpos = np.stack(self.mj_datas_qpos[:n_trials])
         # sim step is run after the thread_fn, store qpos after the last step
         if return_intermediate:
             intermediate_qpos[-1] = last_qpos
@@ -307,6 +309,15 @@ class Sim:
                 relative_qpos[i, 7 * j : 7 * (j + 1)] = qpos
         return relative_qpos
 
+    def _preprocess_env_idx(self, env_idx):
+        """Process the env_idx to match the simulation"""
+        if env_idx is None:
+            env_idx = np.arange(self.n_envs)
+        elif np.isscalar(env_idx):
+            env_idx = np.array([env_idx])
+        env_idx = np.asarray(env_idx, dtype=int)
+        return env_idx
+
     def _preprocess_values(self, values, env_idx):
         """Preprocess the values and env_idx to match"""
         values = np.asarray(values)
@@ -317,9 +328,9 @@ class Sim:
             size = 1 if values.ndim == 1 else len(values)
             env_idx = np.arange(size)
         # if a single environment provided, convert to array
-        if isinstance(env_idx, int):
+        elif np.isscalar(env_idx):
             env_idx = np.array([env_idx])
-        env_idx = np.array(env_idx)
+        env_idx = np.asarray(env_idx, dtype=int)
 
         # Preprocess values
         # if values is 1D, expand it to n_envs
@@ -330,8 +341,11 @@ class Sim:
                 env_idx
             ), "Values need to be 1D or have the same length as env_idx"
 
+        if np.any(env_idx < 0) or np.any(env_idx >= self.n_envs):
+            raise ValueError("env_idx out of range")
         return values, env_idx
 
+    ########## Visualization ##########
     def vis_sync(self, env_idx=0):
         """Sync the simulation state to the viewer"""
         if self.viewer is None:
@@ -348,6 +362,7 @@ class Sim:
 
 
 def test(sim: Sim):
+    """Test the push simulation"""
     # Testing
     sim.set_robot_init_joints(
         np.array([np.pi / 2, -1.7, 2, -1.87, -np.pi / 2, np.pi])
@@ -389,7 +404,7 @@ if __name__ == "__main__":
     np.set_printoptions(suppress=True, precision=5)
 
     curr_dir = os.path.dirname(os.path.abspath(__file__))
-    xml = open(os.path.join(curr_dir, "mujoco_sim.xml")).read()
+    xml = open(os.path.join(curr_dir, "push_sim.xml")).read()
     xml = xml.replace("object_name", "cracker_box_flipped")
     sim = Sim(
         xml,

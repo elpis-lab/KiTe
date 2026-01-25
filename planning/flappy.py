@@ -125,7 +125,7 @@ def visualize_flappy_env(env, paths=None, title="Flappy Bird Environment"):
 
     # Start
     sx, sy, _ = start
-    draw_circle(ax, sx, sy, 10.0, "C9", label="Start")
+    draw_circle(ax, sx, sy, 10.0, "C8", label="Start")
 
     ax.legend(loc="upper left")
     ax.set_xlabel("x")

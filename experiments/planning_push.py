@@ -2,10 +2,12 @@ import os, sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
+import matplotlib.pyplot as plt
 
 from geometry.object_model import get_obj_shape
 from experiments.train_push_model import load_model
 from experiments.utils import DataLoader, set_seed, parse_args, get_names
+from planning.planning_utils import vec_to_cov
 from planning.push import SE2PushPlanner, generate_push_env, visualize_push_env
 
 
@@ -17,6 +19,7 @@ def generate_envs(n_states, visualize=False):
         envs.append(env)
         if visualize:
             visualize_push_env(env)
+            plt.show()
     envs = np.array(envs, dtype=object)
     os.makedirs("data", exist_ok=True)
     np.save("data/planning_push_envs.npy", envs)
@@ -179,9 +182,7 @@ if __name__ == "__main__":
     #     motions.append(motion)
     # motions = np.array(motions, dtype=np.float32)
     # t0_delta = log_se2(to_se2_transform(plan_states[0, :3]))
-    # t0_delta_cov = SE2BeliefOptimizationObjective.vec_to_cov(
-    #     plan_states[0, 3:]
-    # )
+    # t0_delta_cov = vec_to_cov(plan_states[0, 3:])
     # t0s = np.random.multivariate_normal(
     #     t0_delta, t0_delta_cov, size=(n_samples)
     # )
@@ -222,7 +223,7 @@ if __name__ == "__main__":
     # beliefs = []
     # for state in plan_states:
     #     T = to_se2_transform(state[:3])
-    #     Sigma = SE2BeliefOptimizationObjective.vec_to_cov(state[3:])
+    #     Sigma = vec_to_cov(state[3:])
     #     # Sigma = np.diag([0.001, 0.003, 0.001])
     #     beliefs.append([T, Sigma])
     # goal = np.array([0, -0.7, 0])
