@@ -2,89 +2,62 @@ import os, sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
-from scipy.optimize import nnls
+from scipy.optimize import nnls, minimize
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 from simulation.car_sim import Sim
 from geometry.car_dynamics import propagate_analytical, propagate_multi_steps
 from geometry.car_dynamics import CAR_WHEELBASE
-from lie_group.lie_se2 import to_se2_transform, inv_se2_transform, log_se2
 from lie_group.propagation import se2_error, propagate_cov
 from planning.planning_utils import draw_cov_ellipse, world_2d_cov
 
 
 def collect_dataset(
     sim: Sim,
-    N=1e5,
-    durations=(0.5, 1.0),
-    v_range=(0.0, 1.0),
+    n_data=1e4,
+    n_step=10,
+    durations=np.array([1.0]),
+    v_range=(-0.5, 1.0),
     phi_range=(-0.3, 0.3),
-    yaw_random=True,
 ):
     """
-    Collect residuals delta = Log(T_kin^{-1} T_mj)
-    and corresponding control (v, phi, T).
+    Collect per-step residuals over multi-step trajectories.
+    Residuals delta = Log(T_kin^{-1} T_mj) with
+    corresponding control (v, phi, t).
     """
-    durations = np.asarray(durations)
+    n_env = sim.n_envs
+    n = int(n_data // n_step // n_env)
 
     res_list = []
     control_list = []
-    n_done = 0
-    while n_done < N:
-        batch = min(sim.n_envs, N - n_done)
-        env_idx = np.arange(batch)
-
-        # Init
-        x_init = np.zeros(batch)
-        y_init = np.zeros(batch)
-        th_init = (
-            np.random.uniform(-np.pi, np.pi, size=batch)
-            if yaw_random
-            else np.zeros(batch)
-        )
-        # v_init = np.random.uniform(v_range[0], v_range[1], size=batch)
-        v_init = np.ones(batch) * (v_range[1] - v_range[0]) / 2
-
-        init_states = np.stack([x_init, y_init, th_init, v_init], axis=-1)
-        sim.set_car_init_states(init_states, env_idx)
+    for i in tqdm(range(n)):
         sim.reset(wait_time=0.0)
 
         # Sample controls + durations
-        v_cmd = np.random.uniform(v_range[0], v_range[1], size=batch)
-        phi_cmd = np.random.uniform(phi_range[0], phi_range[1], size=batch)
-        t_cmd = np.random.choice(durations, size=batch)
-
-        # Collect 1 control step for each env
-        state_mj = sim.execute_controls(
-            np.concatenate(
-                [v_cmd[:, None, None], phi_cmd[:, None, None]], axis=-1
-            ),
-            t_cmd[:, None],
-            wait_time=0.0,
-            return_intermediate=False,
+        v_cmd = np.random.uniform(v_range[0], v_range[1], size=(n_env, n_step))
+        phi_cmd = np.random.uniform(
+            phi_range[0], phi_range[1], size=(n_env, n_step)
         )
-        state_mj = np.array(state_mj)
-        init_state = state_mj[:, 0, :3]
-        state_mj = state_mj[:, 1, :3]
+        u = np.stack([v_cmd, phi_cmd], axis=-1)
+        t = np.random.choice(durations, size=(n_env, n_step))
 
-        # Kinematic prediction
-        state_kin = np.zeros_like(init_state)
-        for i in range(len(env_idx)):
-            state_kin[i] = propagate_analytical(
-                (v_cmd[i], phi_cmd[i]), t_cmd[i], init_state[i]
-            )
+        # Run in Mujoco
+        states_mj = sim.execute_controls(u, t)
+        states_mj = np.asarray(states_mj, dtype=float)[:, :, :3]
 
-        # Residual delta = Log(T_kin^{-1} T_mj)
-        for i in range(len(env_idx)):
-            trans_kin = to_se2_transform(state_kin[i])
-            trans_mj = to_se2_transform(state_mj[i])
-            trans_delta = inv_se2_transform(trans_kin) @ trans_mj
-            delta = log_se2(trans_delta)
+        # Compute per-step one-step residuals
+        for i in range(n_env):
+            for j in range(n_step):
+                state_mj = states_mj[i, j + 1]
+                state_kin = propagate_analytical(
+                    (v_cmd[i][j], phi_cmd[i][j]), t[i][j], states_mj[i, j]
+                )
+                # Residual delta = Log(T_kin^{-1} T_mj)
+                delta = se2_error(state_kin, state_mj)
+                res_list.append(delta)
+                control_list.append((v_cmd[i][j], phi_cmd[i][j], t[i][j]))
 
-            res_list.append(delta)
-            control_list.append((v_cmd[i], phi_cmd[i], t_cmd[i]))
-
-        n_done += batch
     res = np.asarray(res_list, dtype=float)
     control = np.asarray(control_list, dtype=float)
     return res, control
@@ -93,60 +66,100 @@ def collect_dataset(
 def fit_params(res, control):
     """
     Fit variance coefficients:
-      - qx  = X0 + X1 * |v| T
-      - qy  = Y0 + Y1 * |v| T + Y2 * |v| |tan(phi)| T
-      - qth = YAW0 + YAW1 * |(v / CAR_WHEELBASE) * tan(phi)| T
+      - qx  = X0 + X1 * |v| T + X2 * |tan(phi)| T + X3 * |v| |tan(phi)| T
+      - qy  = Y0 + Y1 * |v| T + Y2 * |tan(phi)| T + Y3 * |v| |tan(phi)| T
+      - qth = T0 + T1 * |v| T + T2 * |tan(phi)| T + T3 * |v| |tan(phi)| T
     using squared residuals.
     """
     v, phi, t = control[:, 0], control[:, 1], control[:, 2]
     w = (v / CAR_WHEELBASE) * np.tan(phi)
+    tanphi = np.tan(phi)
 
-    fv = np.abs(v) * t
-    fvtan = np.abs(v) * np.abs(np.tan(phi)) * t
-    fw = np.abs(w) * t
+    f0 = np.ones_like(t)
+    f1 = np.abs(v) * t
+    f2 = np.abs(tanphi) * t
+    f3 = np.abs(v * tanphi) * t
+    col_x = np.column_stack([f3])
+    col_y = np.column_stack([f3])
+    col_t = np.column_stack([f3])
 
-    # residual squared
-    dx2 = res[:, 0] ** 2
-    dy2 = res[:, 1] ** 2
-    dth2 = res[:, 2] ** 2
+    # solve for coefficients for residual squared
+    def fit_axis(col, res, eps=1e-12):
+        """Fix params"""
+        # x0 = nnls(col, res)[0]
+        x0 = np.zeros(col.shape[1])
+        bounds = [(0.0, None)] * col.shape[1]
 
-    # solve for coefficients
-    ax = np.column_stack([np.ones_like(fv), fv])
-    ay = np.column_stack([np.ones_like(fv), fv, fvtan])
-    ath = np.column_stack([np.ones_like(fw), fw])
-    x0, x1 = nnls(ax, dx2)[0]
-    y0, y1, y2 = nnls(ay, dy2)[0]
-    yaw0, yaw1 = nnls(ath, dth2)[0]
+        # # Negative log-likelihood
+        # def nll(p):
+        #     q = col @ p
+        #     # keep strictly positive for log/div
+        #     q = np.maximum(q, eps)
+        #     return 0.5 * float(np.sum(np.log(q) + res / q))
+
+        def z_score(p):
+            q = col @ p
+            q = np.maximum(q, eps)
+            z = res / np.sqrt(q)
+            mz = z.mean()
+            sz = z.std(ddof=1)
+            return float(mz * mz + (sz - 1.0) ** 2)
+
+        out = minimize(
+            z_score,
+            x0,
+            method="L-BFGS-B",
+            bounds=bounds,
+            options=dict(maxiter=500),
+        )
+        if not out.success:
+            print("[fit_axis] warning:", out.message)
+        return out.x
+
+    x3 = fit_axis(col_x, res[:, 0])
+    y3 = fit_axis(col_y, res[:, 1])
+    t3 = fit_axis(col_t, res[:, 2])
+    x0, x1, x2 = 0.0, 0.0, 0.0
+    y0, y1, y2 = 0.0, 0.0, 0.0
+    t0, t1, t2 = 0.0, 0.0, 0.0
+    x3 = float(x3)
+    y3 = float(y3)
+    t3 = float(t3)
 
     # rescale
-    x1 *= 2.4**2
-    y2 *= 0.6**2
-    yaw1 *= 0.6**2
-    return {
-        "X0": x0,
-        "X1": x1,
-        "Y0": y0,
-        "Y1": y1,
-        "Y2": y2,
-        "YAW0": yaw0,
-        "YAW1": yaw1,
-    }
+    return [x0, x1, x2, x3, y0, y1, y2, y3, t0, t1, t2, t3]
 
 
 def validate(res, control, params):
     """Check z-scores ~ N(0,1) if Q is well calibrated."""
     v, phi, t = control[:, 0], control[:, 1], control[:, 2]
 
-    x0, x1 = params["X0"], params["X1"]
-    y0, y1, y2 = params["Y0"], params["Y1"], params["Y2"]
-    yaw0, yaw1 = params["YAW0"], params["YAW1"]
+    x0, x1, x2, x3 = params[:4]
+    y0, y1, y2, y3 = params[4:8]
+    t0, t1, t2, t3 = params[8:12]
 
     w = (v / CAR_WHEELBASE) * np.tan(phi)
+    tanphi = np.tan(phi)
 
     # Noise model
-    qx = x0 + x1 * np.abs(v) * t
-    qy = (y0 + y1 * np.abs(v) * t) + y2 * np.abs(v) * np.abs(np.tan(phi)) * t
-    qth = yaw0 + yaw1 * np.abs(w) * t
+    qx = (
+        x0
+        + x1 * np.abs(v) * t
+        + x2 * np.abs(tanphi) * t
+        + x3 * np.abs(v * tanphi) * t
+    )
+    qy = (
+        y0
+        + y1 * np.abs(v) * t
+        + y2 * np.abs(tanphi) * t
+        + y3 * np.abs(v * tanphi) * t
+    )
+    qth = (
+        t0
+        + t1 * np.abs(v) * t
+        + t2 * np.abs(tanphi) * t
+        + t3 * np.abs(v * tanphi) * t
+    )
 
     qx = np.maximum(qx, 1e-12)
     qy = np.maximum(qy, 1e-12)
@@ -166,7 +179,7 @@ def validate_sim(
     params,
     k=6,
     duration=1.0,
-    v_range=(0.1, 1.0),
+    v_range=(-0.5, 1.0),
     phi_range=(-0.3, 0.3),
     n_std=2.0,
 ):
@@ -199,21 +212,35 @@ def validate_sim(
 
     # Covariance Propagation
     def get_process_cov(v, phi, t, params):
-        X0, X1 = params["X0"], params["X1"]
-        Y0, Y1, Y2 = params["Y0"], params["Y1"], params["Y2"]
-        YAW0, YAW1 = params["YAW0"], params["YAW1"]
+        X0, X1, X2, X3 = params[:4]
+        Y0, Y1, Y2, Y3 = params[4:8]
+        T0, T1, T2, T3 = params[8:12]
 
         w = (v / CAR_WHEELBASE) * np.tan(phi)
-        qx = X0 + X1 * abs(v) * t
-        qy = (Y0 + Y1 * abs(v) * t) + Y2 * abs(v) * abs(np.tan(phi)) * t
-        qth = YAW0 + YAW1 * abs(w) * t
+        qx = (
+            X0
+            + X1 * abs(v) * t
+            + X2 * abs(np.tan(phi)) * t
+            + X3 * abs(v * np.tan(phi)) * t
+        )
+        qy = (
+            Y0
+            + Y1 * abs(v) * t
+            + Y2 * abs(np.tan(phi)) * t
+            + Y3 * abs(v * np.tan(phi)) * t
+        )
+        qth = (
+            T0
+            + T1 * abs(v) * t
+            + T2 * abs(np.tan(phi)) * t
+            + T3 * abs(v * np.tan(phi)) * t
+        )
 
         qx = max(qx, 1e-12)
         qy = max(qy, 1e-12)
         qth = max(qth, 1e-12)
         return np.diag([qx, qy, qth])
 
-    cov = np.zeros((3, 3), dtype=float)
     covs = np.zeros((k + 1, 3, 3), dtype=float)
     for i in range(k):
         proc_cov = get_process_cov(v_cmd[i], phi_cmd[i], t[i], params)
@@ -251,59 +278,61 @@ def main(sim):
 
     # Collect residual dataset
     print("Collecting dataset")
-    res, control = collect_dataset(
+    res, controls = collect_dataset(
         sim,
-        N=1e4,
-        durations=(1.0,),
-        v_range=(0.0, 1.0),
+        n_data=1e3,
+        n_step=10,
+        durations=np.array([1.0]),
+        v_range=(-0.5, 1.0),
         phi_range=(-0.3, 0.3),
     )
+    np.save("data/car_noise_residuals.npy", res)
+    np.save("data/car_noise_controls.npy", controls)
+    res = np.load("data/car_noise_residuals.npy")
+    controls = np.load("data/car_noise_controls.npy")
 
     # Fit params
     print("\nFitting params")
-    params = fit_params(res, control)
+    params = fit_params(res, controls)
     print("Fitted params (VARIANCE model):")
-    for k, val in params.items():
-        print(f"{k:5s} = {val:.6e}")
+    print("X =", params[:4])
+    print("Y =", params[4:8])
+    print("T =", params[8:12])
 
     # Validate
     print("\nValidate Results:")
-    validate(res, control, params)
+    validate(res, controls, params)
 
     # Final adapted params
-    params = {
-        "X0": 0.0,
-        "X1": 1.45e-3,
-        "Y0": 0.0,
-        "Y1": 0.0,
-        "Y2": 3.70e-4,
-        "YAW0": 0.0,
-        "YAW1": 4.10e-4,
-    }
-    validate(res, control, params)
-
-    sim.close()
+    # params = [None] * 12
+    # params[:4] = [0.0, 5.0e-2, 0.0, 1.0e-2]
+    # params[4:8] = [0.0, 0.0, 0.0, 4.5e-4]
+    # params[8:12] = [0.0, 0.0, 0.0, 3.6e-3]
+    # validate(res, controls, params)
     return params
 
 
 if __name__ == "__main__":
     np.set_printoptions(suppress=True, precision=5)
-    np.random.seed(0)
+    np.random.seed(42)
 
     # Launch simulation
     curr_dir = os.path.dirname(os.path.abspath(__file__))
     xml = open(os.path.join(curr_dir, "car_sim.xml")).read()
-    sim = Sim(xml, n_envs=20, dt=0.01, visualize=False, real_time_vis=False)
+    sim = Sim(xml, n_envs=10, dt=0.01, visualize=True, real_time_vis=False)
 
-    # params = main(sim)
+    # Fit
+    params = main(sim)
 
-    params = {
-        "X0": 0.0,
-        "X1": 1.45e-3,
-        "Y0": 0.0,
-        "Y1": 0.0,
-        "Y2": 3.70e-4,
-        "YAW0": 0.0,
-        "YAW1": 4.10e-4,
-    }
+    # Test in Simulation
+    np.random.seed(10)
+    # params = [None] * 12
+    # params[:4] = [0.0, 1.4e-3, 0.0, 0.0]
+    # params[4:8] = [0.0, 0.0, 0.0, 3.7e-4]
+    # params[8:12] = [0.0, 0.0, 0.0, 1.4e-3]
+    # params[:4] = [0.0, 1.4e-3, 0.0, 0.0]
+    # params[4:8] = [0.0, 0.0, 0.0, 3.7e-4]
+    # params[8:12] = [0.0, 0.0, 0.0, 1.4e-3]
     validate_sim(sim, params, k=10)
+
+    sim.close()
