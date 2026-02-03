@@ -250,19 +250,28 @@ class Sim:
         t_max = 0
         # For each trajectory
         for i in range(n_trajs):
-            ci = np.asarray(controls[i], dtype=float)  # (k_i, 2)
-            di = np.asarray(durations[i], dtype=float)  # (k_i,)
-            assert ci.ndim == 2 and ci.shape[1] == 2, "Invalid control shape"
-            assert (
-                di.ndim == 1 and di.shape[0] == ci.shape[0]
-            ), "Control and duration must have same length"
+            # Handle empty control/duration: treat as single keyframe (one state only)
+            if len(controls[i]) == 0 or len(durations[i]) == 0:
+                ci = np.zeros((0, 2), dtype=float)
+                di = np.zeros(0, dtype=float)
+            else:
+                ci = np.asarray(controls[i], dtype=float)  # (k_i, 2)
+                di = np.asarray(durations[i], dtype=float)  # (k_i,)
+                assert (
+                    ci.ndim == 2 and ci.shape[1] == 2
+                ), "Invalid control shape"
+                assert (
+                    di.ndim == 1 and di.shape[0] == ci.shape[0]
+                ), "Control and duration must have same length"
 
             # compute the number of steps for each control
             # round to nearest
             steps_i = np.rint(di / float(self.dt)).astype(int)
-            steps_i = np.maximum(steps_i, 1)  # at least 1 step
+            steps_i = np.maximum(
+                steps_i, 1
+            )  # at least 1 step (no-op when empty)
             # key step indices to record the state (state after each control)
-            # boundary indices: 0, cumsum(steps)
+            # boundary indices: 0, cumsum(steps); empty trajectory -> [0] only (one keyframe)
             key_idx = np.concatenate(([0], np.cumsum(steps_i)))
 
             traj_ctrls.append(ci)
@@ -375,7 +384,8 @@ class Sim:
         # magic number to compensate
         # 1, the under-actuated P-controller
         # 2, the acceleration and deceleration process
-        wheel_ang_vel = wheel_ang_vel * 1.02
+        wheel_ang_vel = wheel_ang_vel * 1.01
+        steering_pos = steering_pos * 1.01
         return wheel_ang_vel, steering_pos
 
     ########## Helper functions ##########

@@ -5,6 +5,7 @@ import numpy as np
 from scipy.stats import multivariate_normal
 from itertools import product
 
+from geometry.pose import wrap_to_pi
 from lie_group.lie_se2 import exp_se2, log_se2, right_jacobian_se2, adjoint_se2
 from lie_group.lie_se2 import to_se2_vec, to_se2_transform, inv_se2_transform
 from lie_group.plot_utils import plot_results_3d
@@ -35,12 +36,14 @@ def se2_error(s1, s2, weight=None):
 
 def propagate_cov(delta, cov, delta_cov):
     """Propagate the covariance of the SE(2) state."""
-    # action covariance (right Jacobian(delta))
-    jac_r = right_jacobian_se2(delta)
+    # Not needed as delta_cov is already in the tangent space
+    # # action covariance (right Jacobian(delta))
+    # jac_r = right_jacobian_se2(delta)
     # state covariance (inverse of Adjoint(delta))
     adj = adjoint_se2(exp_se2(-delta))
     # Propagate error covariance
-    cov = adj @ cov @ adj.T + jac_r @ delta_cov @ jac_r.T
+    # cov = adj @ cov @ adj.T + jac_r @ delta_cov @ jac_r.T
+    cov = adj @ cov @ adj.T + delta_cov
     return cov
 
 
@@ -118,41 +121,37 @@ def to_tangent_ranges(ranges):
     yaw_samples = np.linspace(yaw_l, yaw_h, 21)
     x_list, y_list = [], []
     for yaw in yaw_samples:
-        jac_inv = jac_inv_se2(yaw)
+        # compute the Jacobian inverse of the SE2 transform
+        if abs(yaw) < 1e-6:
+            jac_inv = np.eye(2)
+        else:
+            alpha = yaw / (2.0 * np.sin(yaw / 2.0))
+            c = np.cos(yaw / 2.0)
+            s = np.sin(yaw / 2.0)
+            jac_inv = alpha * np.array([[c, s], [-s, c]])
+
         pts = (jac_inv @ grid.T).T
         x_list.append(np.max(np.abs(pts[:, 0])))
         y_list.append(np.max(np.abs(pts[:, 1])))
+
     # Inner = intersection across yaw -> min half-extent
     x_min = np.min(x_list)
     y_min = np.min(y_list)
-
     # Tangent space ranges
     lower = np.array([-x_min, -y_min, yaw_l])
     upper = np.array([x_min, y_min, yaw_h])
     return np.array([lower, upper]).T
 
 
-def jac_inv_se2(w):
-    """Convert yaw to Jacobian inverse"""
-    if abs(w) < 1e-6:
-        return np.eye(2)
-    alpha = w / (2.0 * np.sin(w / 2.0))
-    c = np.cos(w / 2.0)
-    s = np.sin(w / 2.0)
-    return alpha * np.array([[c, s], [-s, c]])
+def test(n_steps=5):
+    """Test the propagation and probability of the SE2 state."""
+    ########## Propagation ##########
+    np.random.seed(42)
 
-
-def wrap_to_pi(a):
-    return (a + np.pi) % (2 * np.pi) - np.pi
-
-
-if __name__ == "__main__":
-    ########## Test Propagation_SE2 ##########
     # initial state
     t0 = to_se2_transform((1.0, 1.0, np.deg2rad(60)))
     q0 = 1e-8 * np.eye(3)
     # define motions - n same steps
-    n_steps = 5
     delta = np.array([0.1, 0.1, np.deg2rad(45)])
     delta_cov = np.diag([0.01, 0.01, np.deg2rad(10) ** 2])
     deltas = np.repeat(delta[np.newaxis, :], n_steps, axis=0)
@@ -162,17 +161,17 @@ if __name__ == "__main__":
     prop = Propagation_SE2(t0, q0)
     prop.propagate(deltas, delta_covs)
     mean, cov = prop.get_end_state()
-    mean = prop.mean  # transform
+    mean = prop.mean  # transform mean
 
     # Use Monte Carlo
     n_samples = 10000
-    motions = np.random.multivariate_normal(
-        delta, delta_cov, size=(n_samples, n_steps)
+    e_samples = np.random.multivariate_normal(
+        np.zeros(3), delta_cov, size=(n_samples, n_steps)
     )
-    transform_samples = [t0] * n_samples
+    transform_samples = [t0.copy()] * n_samples
     for n in range(n_steps):
         transform_samples = [
-            transform_samples[i] @ exp_se2(motions[i, n])
+            transform_samples[i] @ exp_se2(delta) @ exp_se2(e_samples[i, n])
             for i in range(n_samples)
         ]
     # get error in tangent space w.r.t. to predicted mean
@@ -184,7 +183,9 @@ if __name__ == "__main__":
     # Plot to see if the error matches the predicted cov
     plot_results_3d(sample_errors, np.zeros(3), cov)
 
-    ########## Test Probability ##########
+    ########## Probability ##########
+    np.random.seed(42)
+
     # define region
     region = to_se2_transform((1, 1, -1.0))
 
@@ -235,3 +236,7 @@ if __name__ == "__main__":
         + f"\nMC(SE2): {s_count / n_samples:.4f}"
     )
     plot_results_3d(rel_ts, rel_mu, rel_cov)
+
+
+if __name__ == "__main__":
+    test()

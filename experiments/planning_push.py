@@ -25,7 +25,6 @@ def generate_envs(n_states, visualize=False):
     np.save("data/planning_push_envs.npy", envs)
 
 
-# State Utils
 def run_planning(
     obj_name,
     model_type,
