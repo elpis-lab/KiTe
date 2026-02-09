@@ -170,18 +170,18 @@ class RunCarPlans(RunPlans):
 
 
 if __name__ == "__main__":
-    # Configs (algo, use_var, active_sampling, terminal_weight)
+    # Configs (algo, use_var, terminal_weight)
     configs = [
-        ("sst", "l2", 0.0),  # Vanilla
-        ("sst", "w2", 0.0),  # Gaussian Belief Trees
-        # ("aorrt", "l2", 0.0),  # Vanilla
-        # ("aorrt", "w2", 0.0),  # Gaussian Belief Trees
-        # ("aorrt", "l2", 5.0),  # Proposed
-        # ("aorrt", "w2", 5.0),  # Proposed
-        # ("aorrt", "l2", 20.0),  # Proposed
-        # ("aorrt", "w2", 20.0),  # Proposed
-        # ("aorrt", "l2", 50.0),  # Proposed
-        # ("aorrt", "w2", 50.0),  # Proposed
+        # ("sst", "l2", 0.0),  # Vanilla
+        # ("sst", "w2", 0.0),  # Gaussian Belief Trees
+        ("aorrt", "l2", 0.0),  # Vanilla
+        ("aorrt", "w2", 0.0),  # Gaussian Belief Trees
+        ("aorrt", "l2", 5.0),  # Proposed
+        ("aorrt", "w2", 5.0),  # Proposed
+        ("aorrt", "l2", 20.0),  # Proposed
+        ("aorrt", "w2", 20.0),  # Proposed
+        ("aorrt", "l2", 50.0),  # Proposed
+        ("aorrt", "w2", 50.0),  # Proposed
     ]
 
     # Execute plans
@@ -214,7 +214,7 @@ if __name__ == "__main__":
             goal_size,
             0,
             obstacles,
-            load_saved_exec=False,
+            load_saved_exec=True,
             saved_exec_file=f"{folder}/{name}_exec_states.npy",
         )
         results, exec_states = runner.evaluate(
