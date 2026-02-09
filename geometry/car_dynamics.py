@@ -8,9 +8,9 @@ CAR_TRACK_WIDTH = 0.17
 CAR_WHEEL_RADIUS = 0.036
 
 # Covariance constants (Fitted from car_noise.py)
-COV_X = 6.5e-3
-COV_Y = 3.0e-3
-COV_YAW = 6.5e-3
+COV_X = (0.0e-5, 22.0e-5)
+COV_Y = (0.2e-5, 3.0e-5)
+COV_YAW = (0.0e-5, 50.0e-5)
 
 
 def propagate_dt(u, t, init_state=(0, 0, 0, 0), dt=0.1):
@@ -107,11 +107,14 @@ def process_cov_body(u, t, eps=1e-12):
     tanphi = np.tan(phi)
 
     # Base
-    f = np.abs(v * tanphi) * t
+    # f0 = np.ones_like(t)
+    f1 = np.abs(v) * t
+    # f2 = np.abs(tanphi) * t
+    f3 = np.abs(v * tanphi) * t
     # Linear model of process covariance
-    var_x = COV_X * f
-    var_y = COV_Y * f
-    var_th = COV_YAW * f
+    var_x = COV_X[0] * f1 + COV_X[1] * f3
+    var_y = COV_Y[0] * f1 + COV_Y[1] * f3
+    var_th = COV_YAW[0] * f1 + COV_YAW[1] * f3
 
     var_x = np.maximum(var_x, eps)
     var_y = np.maximum(var_y, eps)

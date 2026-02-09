@@ -33,7 +33,8 @@ def run_planning(belief, algo, terminal_weight, envs, planning_times, n_reps):
 
     for rep in range(n_reps):
         for prob, env in enumerate(envs):
-            print(f"\nPlanning: {rep}th repeat, {prob}th problem")
+            print(f"\nPlanning: {rep + 1}th repeat, {prob + 1}th problem")
+
             planner = SE2CarPlanner(
                 env["obstacles"], CAR_SIZE, belief, algo, terminal_weight
             )
@@ -58,7 +59,7 @@ if __name__ == "__main__":
         [
             ("belief", 0, int),
             ("algo", "aorrt", str),
-            ("terminal_weight", 2.0, float),
+            ("terminal_weight", 5.0, float),
             ("n_reps", 1, int),
         ]
     )

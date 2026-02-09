@@ -5,22 +5,24 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from scipy.optimize import nnls
+from scipy.stats import truncnorm, beta
 
 from simulation.car_sim import Sim
 from geometry.car_dynamics import propagate_analytical, propagate_multi_steps
-from geometry.car_dynamics import propagate_cov_linear, process_cov_body
+from geometry.car_dynamics import propagate_cov_linear
 from geometry.pose import wrap_to_pi
-from planning.planning_utils import draw_cov_ellipse, world_2d_cov
+from planning.planning_utils import draw_cov_ellipse
+
+from geometry.car_dynamics import COV_X, COV_Y, COV_YAW
 
 
 def run_sim(
     sim: Sim,
     n_traj: int,
-    n_step_range=(5, 10),
+    n_step_range=(1, 31),
     v_range=(-0.3, 0.3),
     phi_range=(-0.3, 0.3),
     t_candidates=np.array([1.0]),
-    random_init_yaw=True,
     return_intermediate=False,
 ):
     """
@@ -29,28 +31,42 @@ def run_sim(
     """
     n_env = sim.n_envs
     n = int(max(n_env, n_traj) // n_env)
+    step_l, step_h = n_step_range
+    v_l, v_h = v_range
+    phi_l, phi_h = phi_range
+
+    def truncated_normal(low, high, mu, sigma, size=1):
+        a = (low - mu) / sigma
+        b = (high - mu) / sigma
+        return truncnorm.rvs(a, b, loc=mu, scale=sigma, size=size)
 
     # Run sim n times
     states_list = []
     controls_list = []
     intermediate_list = []
     for _ in tqdm(range(n)):
-        # Number of steps
-        n_steps = np.random.randint(n_step_range[0], n_step_range[1])
+        # Sample number of steps
+        # n_steps = np.random.randint(n_step_range[0], n_step_range[1])
+        n_steps = truncated_normal(
+            step_l, step_h, (step_l + step_h) / 2, (step_h - step_l) / 4
+        )
+        n_steps = int(n_steps[0])
         # Sample controls: (n_env, n_steps, 2)
-        v_cmd = np.random.uniform(
-            v_range[0], v_range[1], size=(n_env, n_steps)
+        # v_cmd = np.random.uniform(
+        #     v_range[0], v_range[1], size=(n_env, n_steps)
+        # )
+        v_cmd = truncated_normal(
+            v_l, v_h, (v_l + v_h) / 2, (v_h - v_l) / 4, (n_env, n_steps)
         )
-        phi_cmd = np.random.uniform(
-            phi_range[0], phi_range[1], size=(n_env, n_steps)
-        )
+        phi_cmd = np.random.uniform(phi_l, phi_h, size=(n_env, n_steps))
+        # phi_cmd = beta.rvs(0.5, 0.5, size=(n_env, n_steps))
+        # phi_cmd = phi_l + (phi_h - phi_l) * phi_cmd
         u = np.stack([v_cmd, phi_cmd], axis=-1)
         t = np.random.choice(t_candidates, size=(n_env, n_steps))
 
         # Init simulation
         init_state = np.zeros((n_env, 4), dtype=float)
-        if random_init_yaw:
-            init_state[:, 2] = np.random.uniform(-np.pi, np.pi, size=n_env)
+        init_state[:, 2] = np.random.uniform(-np.pi, np.pi, size=n_env)
         sim.set_car_init_states(init_state)
         sim.reset()
 
@@ -132,16 +148,15 @@ def process_data(states_list, controls_list):
 def fit_params(res, controls):
     """
     Fit variance constants for linear covariance model:
-        Var_x  ≈ Cx * |v*tan(phi)| * t
-        Var_y  ≈ Cy * |v*tan(phi)| * t
-        Var_th ≈ Cth* |v*tan(phi)| * t
+        Var_x  ≈ params * [1, |v|, |tan(phi)|, |v*tan(phi)|] * t
+        Var_y  ≈ params * [1, |v|, |tan(phi)|, |v*tan(phi)|] * t
+        Var_th ≈ params * [1, |v|, |tan(phi)|, |v*tan(phi)|] * t
     """
     v, phi, t = controls[:, 0], controls[:, 1], controls[:, 2]
 
     # Design feature (N,3)
     f0 = np.ones_like(t)
-    # f1 = np.abs(v) * t
-    f1 = t
+    f1 = np.abs(v) * t
     f2 = np.abs(np.tan(phi)) * t
     f3 = np.abs(v * np.tan(phi)) * t
     col = np.column_stack([f0, f1, f2, f3])
@@ -196,7 +211,6 @@ def validate(res, control, params):
 
 def fit(sim):
     sim.reset()
-
     states = np.load("data/car_noise_states.npy", allow_pickle=True)
     controls = np.load("data/car_noise_controls.npy", allow_pickle=True)
 
@@ -221,19 +235,58 @@ def validate_sim_stats(params):
     with stats: whitened residuals, d^2, coverage.
     """
     print("\nValidating simulation stats with params:")
-    print("Params:", params)
+    print("Params (x 1e-5):", params * 1e5)
 
     states_list = np.load("data/car_noise_states.npy", allow_pickle=True)
     controls_list = np.load("data/car_noise_controls.npy", allow_pickle=True)
     states_list = states_list.tolist()
     controls_list = controls_list.tolist()
 
+    folder = f"results/planning_car"
+    s = []
+    c = []
+    for name in [
+        "car_aorrt_w2_2.0",
+        "car_aorrt_w2_5.0",
+        "car_aorrt_w2_10.0",
+        "car_aorrt_w2_50.0",
+        "car_aorrt_l2_2.0",
+        "car_aorrt_l2_5.0",
+        "car_aorrt_l2_10.0",
+        "car_aorrt_l2_50.0",
+    ]:
+        states_list = np.load(
+            f"{folder}/{name}_exec_states.npy", allow_pickle=True
+        )
+        controls_list = np.load(
+            f"{folder}/{name}_controls.npy", allow_pickle=True
+        )
+        controls_list = controls_list[:, :, -1].reshape(-1)
+        # remove the index of empty control list
+        control_lengths = np.array([len(control) for control in controls_list])
+        idx = np.where(control_lengths > 0)[0]
+        states = states_list[idx]
+        controls = controls_list[idx]
+        for i in range(len(controls)):
+            for j in range(len(controls[i])):
+                controls[i][j].append(1.0)
+        s.extend(states)
+        c.extend(controls)
+    states = np.asarray(s, dtype=object)
+    controls = np.asarray(c, dtype=object)
+
     all_w = []
     all_d2 = []
     for i in range(len(states_list)):
         controls = np.asarray(controls_list[i], dtype=float)
         k = controls.shape[0]
-        u_i, t = controls[:, :2], controls[:, 2]
+
+        if len(controls) == 0:
+            continue
+        u_i = controls[:, :2]
+        t = np.ones(u_i.shape[0])
+        # u_i = controls[:, :2]
+        # t = controls[:, 2]
 
         # Mujoco states
         mj_key = np.asarray(states_list[i], dtype=float)[:, :3]
@@ -316,8 +369,8 @@ def vis_sim_results(sim: Sim, params, n_std=2.0):
     # belief
     for i in range(len(kin_key)):
         x, y, yaw = kin_key[i]
-        cov_xy_world = world_2d_cov(yaw, covs[i])
-        # cov_xy_world = covs[i]
+        # cov_xy_world = world_2d_cov(yaw, covs[i])
+        cov_xy_world = covs[i]
         draw_cov_ellipse(ax, (x, y), cov_xy_world, sigma=n_std, color="C9")
     # keypoints
     ax.scatter(
@@ -347,19 +400,19 @@ if __name__ == "__main__":
     # collect_data(sim, n_traj=1000)
 
     # Fit
-    params = fit(sim)
-    params = np.array(params)
+    params = np.array(fit(sim))
 
     # Validate from saved data (no sim)
     validate_sim_stats(params)
 
-    # Scale params to fit global stats
-    params[:4] *= 0.83**2  # x
-    params[4:8] *= 0.83**2  # y
-    params[8:] *= 0.57**2  # th
+    # adapted results
+    params = np.zeros(12)
+    params[:4] = [0, COV_X[0], 0, COV_X[1]]
+    params[4:8] = [0, COV_Y[0], 0, COV_Y[1]]
+    params[8:] = [0, COV_YAW[0], 0, COV_YAW[1]]
     validate_sim_stats(params)
 
-    # Test in Simulation
+    # Visualize results
     np.random.seed(42)
     vis_sim_results(sim, params)
 

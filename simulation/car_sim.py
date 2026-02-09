@@ -384,8 +384,8 @@ class Sim:
         # magic number to compensate
         # 1, the under-actuated P-controller
         # 2, the acceleration and deceleration process
-        wheel_ang_vel = wheel_ang_vel * 1.01
-        steering_pos = steering_pos * 1.01
+        wheel_ang_vel = wheel_ang_vel * 1.03
+        steering_pos = steering_pos * 1.03
         return wheel_ang_vel, steering_pos
 
     ########## Helper functions ##########

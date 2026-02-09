@@ -7,10 +7,10 @@ start_time=$(date +%s)
 # List of object name
 # These have the same length
 beliefs=(
-    # 0
-    # 0
-    # 1
-    # 1
+    0
+    1
+    0
+    1
     0
     1
     0
@@ -19,10 +19,10 @@ beliefs=(
     1
 )
 algos=(
-    # "sst"
-    # "aorrt"
-    # "sst"
-    # "aorrt"
+    "sst"
+    "sst"
+    "aorrt"
+    "aorrt"
     "aorrt"
     "aorrt"
     "aorrt"
@@ -31,14 +31,14 @@ algos=(
     "aorrt"
 )
 terminal_weights=(
-    # 0.0
-    # 0.0
-    # 0.0
-    # 0.0
+    0.0
+    0.0
+    0.0
+    0.0
     5.0
     5.0
-    10.0
-    10.0
+    20.0
+    20.0
     50.0
     50.0
 )

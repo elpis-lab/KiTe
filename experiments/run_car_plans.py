@@ -2,14 +2,18 @@ import os, sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
+from tqdm import tqdm
 
 from experiments.run_plans import RunPlans
-from planning.car import POS_RANGES, CAR_SIZE, OBSTACLES
+from geometry.pose import wrap_to_pi
+from planning.car import POS_RANGES, OBSTACLES, CAR_SIZE, SE2CarPlanner
 from planning.car import SE2CarOptimizationObjective
-from planning.planning_utils import rects_rects_in_collision
+from planning.planning_utils import (
+    circles_in_collision,
+    rects_rects_in_collision,
+)
 from planning.planning_utils import points_out_of_bound, se2_points_in_region
 from simulation.car_sim import Sim
-from lie_group.lie_se2 import to_se2_transform, inv_se2_transform, log_se2
 
 
 class RunCarPlans(RunPlans):
@@ -30,9 +34,10 @@ class RunCarPlans(RunPlans):
         # Initialize simulation
         par_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         xml = open(os.path.join(par_dir, "simulation/car_sim.xml")).read()
-        self.sim = Sim(xml, n_envs=10, dt=0.01, visualize=True)
+        self.sim = Sim(xml, 10, 0.01)
 
         # Common setup
+        self.planner = SE2CarPlanner(obstacles)
         self.goals = goals
         self.goal_size = goal_size
         self.desired_goal = desired_goal
@@ -40,7 +45,7 @@ class RunCarPlans(RunPlans):
         self.load_saved_exec = load_saved_exec
         self.saved_exec_file = saved_exec_file
 
-    def run_plans(self, plan_states, plan_controls):
+    def run_plans(self, plan_states, plan_controls, idx_flat_to_grid=None):
         """
         Run the plans and collect the results
 
@@ -53,15 +58,16 @@ class RunCarPlans(RunPlans):
         """
         # Check if we should load saved execution states
         if self.load_saved_exec:
-            exec_states = np.load(self.saved_exec_file, allow_pickle=True)
-            exec_states = exec_states.tolist()
-        # Execute plans in parallel using simulation
+            exec_states_grid = np.load(self.saved_exec_file, allow_pickle=True)
+            exec_states = []
+            for idx, (r, p, t) in idx_flat_to_grid.items():
+                exec_states.append(exec_states_grid[r, p, t])
         else:
             # Run simulation to get execution states
             exec_states = []
             n_plans = len(plan_states)
             batch_size = self.sim.n_envs
-            for batch_start in range(0, n_plans, batch_size):
+            for batch_start in tqdm(range(0, n_plans, batch_size)):
                 batch_end = min(batch_start + batch_size, n_plans)
 
                 # Prepare controls and durations for parallel execution
@@ -95,16 +101,25 @@ class RunCarPlans(RunPlans):
         hits = []
         reacheds = []
         costs = []
-        for states in exec_states:
+        for i, states in enumerate(exec_states):
             # Extract only SE2 states (x, y, yaw)
             states = np.asarray(states)[:, :3]
 
             # Check collision for each state
             hit = points_out_of_bound(states[:, :2], POS_RANGES)
+            # hit = hit | rects_rects_in_collision(
+            #     states[:, :3], CAR_SIZE, self.obstacles
+            # )
+            for j in range(len(states)):
+                hit[j] = hit[j] | circles_in_collision(
+                    states[j],
+                    self.planner.car_circles,
+                    self.planner.obstacles_circles,
+                )
 
             # Check goal for each state
             reached = np.zeros(len(states), dtype=bool)
-            for goal in self.goals:
+            for g_i, goal in enumerate(self.goals):
                 reached = reached | se2_points_in_region(
                     states, goal, self.goal_size
                 )
@@ -157,18 +172,16 @@ class RunCarPlans(RunPlans):
 if __name__ == "__main__":
     # Configs (algo, use_var, active_sampling, terminal_weight)
     configs = [
-        # ("sst", "l2", 0.0),  # Vanilla
+        ("sst", "l2", 0.0),  # Vanilla
+        ("sst", "w2", 0.0),  # Gaussian Belief Trees
         # ("aorrt", "l2", 0.0),  # Vanilla
-        # ("sst", "w2", 0.0),  # Gaussian Belief Trees
         # ("aorrt", "w2", 0.0),  # Gaussian Belief Trees
-        # ("aorrt", "l2", 2.0),  # Proposed
-        # ("aorrt", "w2", 2.0),  # Proposed
         # ("aorrt", "l2", 5.0),  # Proposed
         # ("aorrt", "w2", 5.0),  # Proposed
-        # ("aorrt", "l2", 10.0),  # Proposed
-        # ("aorrt", "w2", 10.0),  # Proposed
-        ("aorrt", "l2", 50.0),  # Proposed
-        ("aorrt", "w2", 50.0),  # Proposed
+        # ("aorrt", "l2", 20.0),  # Proposed
+        # ("aorrt", "w2", 20.0),  # Proposed
+        # ("aorrt", "l2", 50.0),  # Proposed
+        # ("aorrt", "w2", 50.0),  # Proposed
     ]
 
     # Execute plans
@@ -201,48 +214,182 @@ if __name__ == "__main__":
             goal_size,
             0,
             obstacles,
-            True,
-            f"{folder}/{name}_exec_states.npy",
+            load_saved_exec=False,
+            saved_exec_file=f"{folder}/{name}_exec_states.npy",
         )
         results, exec_states = runner.evaluate(
-            all_states[:, :, -1].reshape(-1),  # object
-            all_controls[:, :, -1].reshape(-1),  # object
-            all_costs[:, :, -1, :].reshape(-1, 2),  # float
-            reps_in_states=5,
+            all_states[:, :, :], all_controls[:, :, :], all_costs[:, :, :]
         )
-        runner.close()
+        results = np.asarray(results, dtype=float)
+        exec_states = np.asarray(exec_states, dtype=object)
         np.save(f"{folder}/{name}_results.npy", results)
-        np.save(
-            f"{folder}/{name}_exec_states.npy",
-            np.array(exec_states, dtype=object),
-        )
+        np.save(f"{folder}/{name}_exec_states.npy", exec_states)
+        runner.close()
 
         # Get rid of the ones with zero errors (failed plans)
-        mask = results[:, :, 3] > 0
+        mask = results[:, :, -1, 3] > 0
         print(f"\n{name}:")
-        print(f"Success:\t{np.mean(results[:, :, 0])}")
-        print(f"SE2 Error:\t{np.mean(results[:, :, 3][mask])}")
-        print(f"Hits Obs:\t{results[:, :, 1]}")
-        print(f"Reached:\t{results[:, :, 2]}")
-        print(f"Running Cost:\t{np.mean(results[:, :, 9][mask])}")
-        print(f"Terminal Cost:\t{np.mean(results[:, :, 10][mask])}")
+        print(f"Failed plans count:\t{np.sum(~mask)}")
+        print(f"Success:\t{np.mean(results[:, :, -1, 0])}")
+        print(f"SE2 Error:\t{np.mean(results[:, :, -1, 3][mask])}")
+        # print(f"Hits Obs:\t{results[:, :, -1, 1]}")
+        print(f"Hits count:\t{np.sum(results[:, :, -1, 1])}")
+        # print(f"Reached:\t{results[:, :, -1, 2]}")
+        print(f"Reached count:\t{np.sum(results[:, :, -1, 2])}")
+        print(f"Running Cost:\t{np.mean(results[:, :, -1, 9][mask])}")
+        print(f"Terminal Cost:\t{np.mean(results[:, :, -1, 10][mask])}")
 
-        # Visualize
-        from planning.car import visualize_car_env
-        import matplotlib.pyplot as plt
+        # # TODO
+        # from geometry.pose import vec_to_cov
+        # # Compute average planned running costs from all_states
+        # l2_running_costs = []
+        # w2_running_costs = []
+        # # Iterate through all plans (reps, problems, times)
+        # for rep_idx in range(all_states.shape[0]):
+        #     for prob_idx in range(all_states.shape[1]):
+        #         plan_path = all_states[rep_idx, prob_idx, -1]
+        #         if plan_path is None or len(plan_path) < 2:
+        #             continue
+        #         plan_path = np.asarray(plan_path)
 
-        envs = np.load(f"data/planning_car_envs.npy", allow_pickle=True)
-        # for j in range(len(envs)):
-        for j in range(5):
-            print(f"Problem {j}:")
-            mask = results[:, j, 3] > 0
-            print(f"Terminal Cost:\t{np.mean(results[:, j, 10][mask])}")
-            print(f"Success:\t{np.mean(results[:, j, 0])}")
-            # for i in range(5):
-            #     visualize_car_env(
-            #         envs[j],
-            #         all_states[i, j, -1],
-            #         exec_states[i * len(envs) + j],
-            #         draw_car_shape=True,
-            #     )
-            #     plt.show()
+        #         # Compute running cost for this plan
+        #         l2_cost = 0.0
+        #         w2_cost = 0.0
+        #         for i in range(len(plan_path) - 1):
+        #             s1 = plan_path[i]
+        #             s2 = plan_path[i + 1]
+        #             # Extract state and covariance
+        #             state1 = s1[:3]
+        #             state2 = s2[:3]
+        #             cov1 = vec_to_cov(s1[3:])
+        #             cov2 = vec_to_cov(s2[3:])
+
+        #             # L2 distance (no covariance)
+        #             l2_dist = SE2CarOptimizationObjective.se2_distance(
+        #                 state1, state2
+        #             )
+        #             l2_cost += l2_dist
+        #             # W2 distance (with covariance)
+        #             w2_dist = SE2CarOptimizationObjective.se2_distance(
+        #                 state1, state2, cov1, cov2
+        #             )
+        #             w2_cost += w2_dist
+        #         # print(len(plan_path))
+        #         # input()
+        #         l2_running_costs.append(l2_cost)
+        #         w2_running_costs.append(w2_cost)
+        # avg_l2_running_cost = np.mean(l2_running_costs)
+        # avg_w2_running_cost = np.mean(w2_running_costs)
+        # print(f"Planned Running Cost (L2):\t{avg_l2_running_cost:.4f}")
+        # print(f"Planned Running Cost (W2):\t{avg_w2_running_cost:.4f}")
+
+        # # TODO
+        # # Compute average planned terminal costs from all_states
+        # desired_goal = goals[0]  # desired_goal = 0 from line 219
+        # l2_terminal_costs = []
+        # w2_terminal_costs = []
+        # # Iterate through all plans (reps, problems, times)
+        # for rep_idx in range(all_states.shape[0]):
+        #     for prob_idx in range(all_states.shape[1]):
+        #         plan_path = all_states[rep_idx, prob_idx, -1]
+        #         if plan_path is None or len(plan_path) < 2:
+        #             continue
+        #         plan_path = np.asarray(plan_path)
+
+        #         # Get the last state
+        #         last_state_vec = plan_path[-1]
+        #         last_state = last_state_vec[:3]
+
+        #         # L2 terminal cost (no covariance)
+        #         l2_terminal = SE2CarOptimizationObjective.se2_distance(
+        #             last_state, desired_goal
+        #         )
+        #         l2_terminal_costs.append(l2_terminal)
+
+        #         # W2 terminal cost (with covariance, Wasserstein to Dirac at goal)
+        #         cov_last = vec_to_cov(last_state_vec[3:])
+        #         w2_terminal = SE2CarOptimizationObjective.se2_distance(
+        #             last_state, desired_goal, cov_last
+        #         )
+        #         w2_terminal_costs.append(w2_terminal)
+
+        # avg_l2_terminal_cost = np.mean(l2_terminal_costs)
+        # avg_w2_terminal_cost = np.mean(w2_terminal_costs)
+        # print(f"Planned Terminal Cost (L2):\t{avg_l2_terminal_cost:.4f}")
+        # print(f"Planned Terminal Cost (W2):\t{avg_w2_terminal_cost:.4f}")
+
+        # # Cholesky whitening: check if planned covariance matches executed states
+        # # Use last trajectory of each (trial, problem); state cov in global frame.
+        # n_reps, n_problems = all_states.shape[0], all_states.shape[1]
+        # all_whitened = []
+        # all_d2 = []
+        # for rep in range(n_reps):
+        #     for prob in range(n_problems):
+        #         plan_path = all_states[rep, prob, -1]
+        #         if plan_path is None or len(plan_path) < 2:
+        #             continue
+        #         plan_path = np.asarray(plan_path)
+        #         # Executed trajectory for this (rep, prob)
+        #         plan_flat_idx = rep * n_problems + prob
+        #         exec_traj = np.asarray(exec_states[plan_flat_idx])[:, :3]
+
+        #         # compute cholesky whitening
+        #         for i in range(len(plan_path)):
+        #             planned_vec = plan_path[i]
+        #             if len(planned_vec) <= 3:
+        #                 continue
+        #             mu = np.asarray(planned_vec[:3], dtype=float)
+        #             cov = vec_to_cov(planned_vec[3:])
+
+        #             exec_state = exec_traj[i]
+        #             residual = exec_state - mu
+        #             residual[2] = wrap_to_pi(residual[2])
+
+        #             chol = np.linalg.cholesky(cov)
+        #             w = np.linalg.solve(chol, residual)
+        #             all_whitened.append(w)
+        #             d2 = float(w @ w)
+        #             all_d2.append(d2)
+
+        # if all_whitened:
+        #     all_whitened = np.array(all_whitened)
+        #     all_d2 = np.array(all_d2)
+        #     # Chi-squared 3 dof quantiles: fraction of exec states inside that cov region
+        #     chi2 = {"50%": 2.366, "90%": 6.251, "95%": 7.815, "99%": 11.345}
+        #     cover = {k: np.mean(all_d2 <= v) for k, v in chi2.items()}
+
+        #     print(
+        #         "Cholesky whitened (planned cov vs exec; ideal mean~0, std~1):"
+        #     )
+        #     for j, name in enumerate(["x", "y", "yaw"]):
+        #         print(
+        #             f"  {name:>4s}: mean={all_whitened[:, j].mean():+.3f}, "
+        #             f"std={all_whitened[:, j].std(ddof=1):.3f}"
+        #         )
+        #     print(f"  d^2: mean={all_d2.mean():.3f} (ideal ~3.0)")
+        #     print("Coverage:", cover)
+        # else:
+        #     print(
+        #         "Cholesky whitening: no valid (rep,prob,keyframe) with covariance."
+        #     )
+
+        # # TODO
+        # # Visualize
+        # from planning.car import visualize_car_env
+        # import matplotlib.pyplot as plt
+
+        # envs = np.load(f"data/planning_car_envs.npy", allow_pickle=True)
+        # # for j in range(len(envs)):
+        # for j in range(1):
+        #     print(f"Problem {j}:")
+        #     mask = results[:, j, 3] > 0
+        #     print(f"Terminal Cost:\t{np.mean(results[:, j, 10][mask])}")
+        #     print(f"Success:\t{np.mean(results[:, j, 0])}")
+        #     for i in range(len(all_states)):
+        #         visualize_car_env(
+        #             envs[j],
+        #             all_states[i, j, -1],
+        #             exec_states[i * len(envs) + j],
+        #             draw_car_shape=True,
+        #         )
+        #         plt.show()
