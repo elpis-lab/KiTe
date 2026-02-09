@@ -1,5 +1,6 @@
 import math
 import numpy as np
+from scipy.special import erf
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon, Ellipse
 
@@ -143,6 +144,44 @@ def rects_circles_in_collision(pose, shape, circles):
     return hits
 
 
+def approx_rect_to_circles(rect, margin=0.0, overlap_frac=0.1):
+    """Approximate a rectangle to a list of circles"""
+    x, y, w, h = rect
+    # Decide dominant axis
+    if w >= h:
+        axis = "x"
+        long_len, short_len = w, h
+    else:
+        axis = "y"
+        long_len, short_len = h, w
+    long_len += 2.0 * margin
+
+    # Radius = half of short side
+    r = 0.5 * short_len
+    # if the long dimension fits within one circle's diameter
+    if long_len <= 2.0 * r:
+        return np.array([[x, y, r]], dtype=float)
+
+    # Step of placing circles
+    step = 2.0 * r * (1.0 - overlap_frac)
+    start = -0.5 * long_len
+    end = 0.5 * long_len
+    n_intervals = max(1, int(np.ceil((end - start) / step)))
+
+    # Generate coords with spacing <= step, including end
+    coords = np.linspace(start, end, n_intervals + 1)
+    circles = np.zeros((coords.shape[0], 3), dtype=float)
+    if axis == "x":
+        circles[:, 0] = x + coords
+        circles[:, 1] = y
+    else:
+        circles[:, 0] = x
+        circles[:, 1] = y + coords
+    circles[:, 2] = r
+
+    return circles
+
+
 # rectangles and rectangles
 def rects_rects_in_collision(pose, shape, rects):
     """
@@ -220,6 +259,104 @@ def rects_rects_in_collision(pose, shape, rects):
     hits = np.any(collide_nm, axis=1)
 
     return hits[0] if single else hits
+
+
+# probability of collision (circles version)
+def circles_in_collision(center_pose, body_circles, obstacles):
+    """Check if the circles are in collision"""
+    if obstacles is None or len(obstacles) == 0:
+        return 0.0
+    obs_p = obstacles[:, :2]
+    obs_r = obstacles[:, 2]
+
+    # Main body represented as K circles
+    body_circles = np.asarray(body_circles)
+    body_p = body_circles[:, :2]
+    body_r = body_circles[:, 2]
+    # compute centers & covs in world frame for each circleq
+    w_body_p, _ = circles_world_centers_and_covs(
+        center_pose, np.zeros((3, 3)), body_p
+    )
+
+    # Pairwise distance check: ||pi - pj|| <= ri + rj
+    diff = w_body_p[:, None, :] - obs_p[None, :, :]
+    d2 = np.sum(diff * diff, axis=-1)
+    # (K, M) threshold squared
+    threshold = body_r[:, None] + obs_r[None, :]
+    in_collision = np.any(d2 <= threshold**2)
+    return bool(in_collision)
+
+
+def circles_collision_risk(center_pose, center_cov, body_circles, obstacles):
+    if obstacles is None or len(obstacles) == 0:
+        return 0.0
+    obs_p = obstacles[:, :2]
+    obs_r = obstacles[:, 2]
+
+    # Main body represented as K circles
+    body_circles = np.asarray(body_circles)
+    body_p = body_circles[:, :2]
+    body_r = body_circles[:, 2]
+    # compute centers & covs in world frame for each circle
+    w_body_p, w_body_cov = circles_world_centers_and_covs(
+        center_pose, center_cov, body_p
+    )
+
+    # Broadcast distance matrix over (K, M)
+    d = w_body_p[:, None, :] - obs_p[None, :, :]
+    s = np.linalg.norm(d, axis=2)
+
+    # Unit directions u
+    u = d / (s[..., None] + 1e-12)  # (K, M, 2)
+    # Directional variance
+    # sigma^2 = u^T Sy u, with Sy only depends on k
+    # einsum: u(k,m,i) * Sy(k,i,j) * u(k,m,j)
+    var = np.einsum("kmi,kij,kmj->km", u, w_body_cov, u)
+    var = np.maximum(var, 1e-12)
+    sigma = np.sqrt(var)
+
+    # Collision radius rho(k, m) = body_r[k] + obs_r[m]
+    rho = body_r[:, None] + obs_r[None, :]
+    margin = s - rho  # >0 safe
+
+    # If mean already in collision, probability ~ 1
+    # Otherwise, probability = Phi(-(margin) / sigma)
+    z = -(margin / sigma)
+    # normal cumulative distribution function
+    p = 0.5 * (1.0 + erf(z / np.sqrt(2.0)))
+    p = np.clip(p, 0.0, 1.0)
+    risk = np.max(p)
+    # p_obs = 1.0 - np.prod(1.0 - p, axis=0)
+    # risk = 1.0 - np.prod(1.0 - p_obs)
+    return float(risk)
+
+
+def circles_world_centers_and_covs(pose, cov, body_p):
+    """Convert body frame circle centers & covs to world frame"""
+    x, y, yaw = pose
+    c = np.cos(yaw)
+    s = np.sin(yaw)
+    rot = np.array([[c, -s], [s, c]])
+    # Convert to world positions
+    w_body_p = body_p @ rot.T + np.array([x, y])
+
+    # Convert to world covs
+    # build Jacobian
+    px, py = body_p[:, 0], body_p[:, 1]
+    dth_x = -s * px - c * py
+    dth_y = +c * px - s * py
+    jac = np.zeros((body_p.shape[0], 2, 3), dtype=float)
+    jac[:, 0, 0] = 1.0
+    jac[:, 1, 1] = 1.0
+    jac[:, 0, 2] = dth_x
+    jac[:, 1, 2] = dth_y
+    # to world covs
+    w_body_cov = jac @ cov @ np.transpose(jac, (0, 2, 1))
+    w_body_cov = (
+        0.5 * (w_body_cov + np.transpose(w_body_cov, (0, 2, 1)))
+        + 1e-12 * np.eye(2)[None, :, :]
+    )
+    return w_body_p, w_body_cov
 
 
 # Plotting
