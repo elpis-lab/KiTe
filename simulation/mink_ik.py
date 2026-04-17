@@ -210,7 +210,7 @@ class UR10IK(IK):
 
 def test_ik():
     # Initialize IK
-    xml = "assets/ur10_rod_ik.xml"
+    xml = "assets/ur10_rod_table.xml"
     ik = UR10IK(xml)
 
     # Launch Sim

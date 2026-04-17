@@ -11,11 +11,11 @@
 
       <default class="size4">
         <joint damping="10"/>
-        <position forcerange="-330 330" kp="17000" kv="1700"/>
+        <position forcerange="-330 330"/>
       </default>
       <default class="size3">
         <joint damping="5"/>
-        <position forcerange="-150 150" kp="14000" kv="1400"/>
+        <position forcerange="-150 150"/>
         <default class="size3_limited">
           <joint range="-3.1415 3.1415"/>
           <position ctrlrange="-3.1415 3.1415"/>
@@ -23,7 +23,7 @@
       </default>
       <default class="size2">
         <joint damping="2"/>
-        <position forcerange="-56 56" kp="9000" kv="900"/>
+        <position forcerange="-56 56"/>
       </default>
 
       <default class="visual">
@@ -63,7 +63,6 @@
     <material class="ur10" name="wrist2_visual" texture="wrist2_texture" />
     <material class="ur10" name="wrist3_visual" texture="wrist3_texture" />
 
-    <material class="ur10" name="black" rgba="0.033 0.033 0.033 1"/>
     <material class="ur10" name="gold" rgba="1 0.843 0 1"/>
   </asset>
 
