@@ -3,15 +3,24 @@ import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import matplotlib.pyplot as plt
-from planning.flappy import (
-    visualize_flappy_env,
-    generate_flappy_env,
-    FlappyPlanner,
-)
-import ompl.util as ou
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+
+from planning.flappy import visualize_flappy_env, generate_flappy_env
+from planning.flappy import FlappyPlanner
+
+import matplotlib as mpl
+
+mpl.rcParams["text.usetex"] = True
+mpl.rcParams["font.family"] = "serif"
+mpl.rcParams["font.serif"] = ["Times New Roman"]
+mpl.rcParams["mathtext.fontset"] = "stix"  # makes math look like Times
+# avoid Type 3 fonts
+mpl.rcParams["pdf.fonttype"] = 42
+mpl.rcParams["ps.fonttype"] = 42
 
 
-def process_cost(costs: np.ndarray, which: int):
+def process_cost(costs: np.ndarray, which: int, states: np.ndarray):
     """
     costs: (R, P, T, 2) with -1.0 for not valid
     which: 0=running, 1=terminal
@@ -19,8 +28,25 @@ def process_cost(costs: np.ndarray, which: int):
       mean_curve: (T,)
       std_curve : (T,)  std across reps of (mean over problems)
     """
-    # (R,P,T)
-    x = costs[..., which]
+    # Goal
+    envs = np.load("data/planning_flappy_envs.npy", allow_pickle=True)
+    goal = np.array(envs[0]["goal"])
+
+    # running cost
+    if which == 0:
+        x = costs[..., which]
+    # terminal cost
+    else:
+        # x = costs[..., which]
+        # Compute terminal distance to the goal
+        r, p, t = states.shape
+        terminals = np.array(
+            [
+                [[states[r, p, t][-1][:2] for t in range(t)] for p in range(p)]
+                for r in range(r)
+            ]
+        )
+        x = np.linalg.norm(terminals - goal, axis=-1)
     x = np.where(x < 0.0, np.nan, x)  # -1.0 for not valid
 
     # Per-rep mean over problems: (R,T)
@@ -39,142 +65,198 @@ def plot_costs(
     error_band_alpha=0.18,
 ):
     # rep x n_problems x n_times x 2 (running, terminal)
-    sst = np.load(os.path.join(root, "sst_0.0_costs.npy"))
-    aorrt = np.load(os.path.join(root, "aorrt_0.0_costs.npy"))
-    at = np.load(os.path.join(root, "aorrt_1.0_costs.npy"))
+    sst = np.load(root + "/sst_0.0_costs.npy")
+    aorrt = np.load(root + "/aorrt_0.0_costs.npy")
+    kite = np.load(root + "/aorrt_1.0_costs.npy")
+    sst_s = np.load(root + "/sst_0.0_plan_states.npy", allow_pickle=True)
+    aorrt_s = np.load(root + "/aorrt_0.0_plan_states.npy", allow_pickle=True)
+    kite_s = np.load(root + "/aorrt_1.0_plan_states.npy", allow_pickle=True)
 
     # Running
-    sst_run_mean, sst_run_std = process_cost(sst, which=0)
-    aorrt_run_mean, aorrt_run_std = process_cost(aorrt, which=0)
-    at_run_mean, at_run_std = process_cost(at, which=0)
+    sst_run_mean, sst_run_std = process_cost(sst, 0, sst_s)
+    aorrt_run_mean, aorrt_run_std = process_cost(aorrt, 0, aorrt_s)
+    kite_run_mean, kite_run_std = process_cost(kite, 0, kite_s)
     # AORRT-T terminal
-    at_term_mean, at_term_std = process_cost(at, which=1)
+    sst_term_mean, sst_term_std = process_cost(sst, 1, sst_s)
+    aorrt_term_mean, aorrt_term_std = process_cost(aorrt, 1, aorrt_s)
+    kite_term_mean, kite_term_std = process_cost(kite, 1, kite_s)
 
-    # AORRT-T total (running + terminal) computed before stats
-    at_total = (at[..., 0] + at[..., 1])[..., None]  # (R,P,T,1)
-    at_total_pack = np.concatenate([at_total, at_total], -1)  # fake (R,P,T,2)
-    at_tot_mean, at_tot_std = process_cost(at_total_pack, which=0)
+    text_size = 18
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    # Same method -> same color in both panels (matplotlib tab10 shorthand).
+    col_aorrt, col_sst, col_kite = "C1", "C8", "C6"
+    lbl_aorrt = "Base (AO-RRT)"
+    lbl_sst = "Base (SST)"
+    lbl_kite = "KiTe (AO-RRT, 1)"
+
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4.5), sharex=True, sharey=False)
 
     planning_times = np.arange(0.1, 10.01, 0.1)
-    (l_sst,) = ax.plot(
-        planning_times, sst_run_mean, "-", linewidth=2.5, label="SST (running)"
-    )
-    (l_aorrt,) = ax.plot(
+    axes[0].plot(
         planning_times,
         aorrt_run_mean,
         "-",
         linewidth=2.5,
-        label="AORRT (running)",
+        color=col_aorrt,
+        label=lbl_aorrt,
     )
-    (l_at,) = ax.plot(
+    axes[0].plot(
         planning_times,
-        at_run_mean,
+        sst_run_mean,
         "-",
         linewidth=2.5,
-        label="AORRT-T (running)",
+        color=col_sst,
+        label=lbl_sst,
+    )
+    axes[0].plot(
+        planning_times,
+        kite_run_mean,
+        "-",
+        linewidth=2.5,
+        color=col_kite,
+        label=lbl_kite,
     )
 
     if show_error_band:
-        ax.fill_between(
-            planning_times,
-            sst_run_mean - sst_run_std,
-            sst_run_mean + sst_run_std,
-            alpha=error_band_alpha,
-            linewidth=0,
-            color=l_sst.get_color(),
-        )
-        ax.fill_between(
+        axes[0].fill_between(
             planning_times,
             aorrt_run_mean - aorrt_run_std,
             aorrt_run_mean + aorrt_run_std,
             alpha=error_band_alpha,
             linewidth=0,
-            color=l_aorrt.get_color(),
+            color=col_aorrt,
         )
-        ax.fill_between(
+        axes[0].fill_between(
             planning_times,
-            at_run_mean - at_run_std,
-            at_run_mean + at_run_std,
+            sst_run_mean - sst_run_std,
+            sst_run_mean + sst_run_std,
             alpha=error_band_alpha,
             linewidth=0,
-            color=l_at.get_color(),
+            color=col_sst,
+        )
+        axes[0].fill_between(
+            planning_times,
+            kite_run_mean - kite_run_std,
+            kite_run_mean + kite_run_std,
+            alpha=error_band_alpha,
+            linewidth=0,
+            color=col_kite,
         )
 
-    c = l_at.get_color()
-    ax.plot(
+    axes[1].plot(
         planning_times,
-        at_term_mean,
-        ":",
+        aorrt_term_mean,
+        "-",
         linewidth=2.5,
-        color=c,
-        label="AORRT-T (terminal)",
+        color=col_aorrt,
+        label=lbl_aorrt,
     )
-    ax.plot(
+    axes[1].plot(
         planning_times,
-        at_tot_mean,
-        "-.",
+        sst_term_mean,
+        "-",
         linewidth=2.5,
-        color=c,
-        label="AORRT-T (total)",
+        color=col_sst,
+        label=lbl_sst,
+    )
+    axes[1].plot(
+        planning_times,
+        kite_term_mean,
+        "-",
+        linewidth=2.5,
+        color=col_kite,
+        label=lbl_kite,
     )
 
     if show_error_band:
-        ax.fill_between(
+        axes[1].fill_between(
             planning_times,
-            at_term_mean - at_term_std,
-            at_term_mean + at_term_std,
+            aorrt_term_mean - aorrt_term_std,
+            aorrt_term_mean + aorrt_term_std,
             alpha=error_band_alpha,
             linewidth=0,
-            color=c,
+            color=col_aorrt,
         )
-        ax.fill_between(
+        axes[1].fill_between(
             planning_times,
-            at_tot_mean - at_tot_std,
-            at_tot_mean + at_tot_std,
+            sst_term_mean - sst_term_std,
+            sst_term_mean + sst_term_std,
             alpha=error_band_alpha,
             linewidth=0,
-            color=c,
+            color=col_sst,
+        )
+        axes[1].fill_between(
+            planning_times,
+            kite_term_mean - kite_term_std,
+            kite_term_mean + kite_term_std,
+            alpha=error_band_alpha,
+            linewidth=0,
+            color=col_kite,
         )
 
-    ax.set_xlabel("Planning time (s)")
-    ax.set_ylabel("Cost")
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="best")
-    fig.savefig(root + "/cost_curves.png", dpi=200, bbox_inches="tight")
+    # Running panel: y-range from data (do not force zero at bottom).
+    run_lo = np.nanmin(
+        np.stack(
+            [
+                sst_run_mean - (sst_run_std if show_error_band else 0.0),
+                aorrt_run_mean - (aorrt_run_std if show_error_band else 0.0),
+                kite_run_mean - (kite_run_std if show_error_band else 0.0),
+            ]
+        )
+    )
+    run_hi = np.nanmax(
+        np.stack(
+            [
+                sst_run_mean + (sst_run_std if show_error_band else 0.0),
+                aorrt_run_mean + (aorrt_run_std if show_error_band else 0.0),
+                kite_run_mean + (kite_run_std if show_error_band else 0.0),
+            ]
+        )
+    )
+    run_pad = 0.06 * (run_hi - run_lo) if np.isfinite(run_hi - run_lo) else 1.0
+    axes[0].set_ylim(run_lo - run_pad - 5, run_hi + run_pad + 5)
+    axes[1].set_ylim(0, 220)
 
-    return fig, ax
+    axes[0].set_title("Running Cost", fontsize=text_size)
+    axes[1].set_title(
+        "Terminal Distance to the Goal Center", fontsize=text_size
+    )
+
+    axes[0].set_xlabel("Planning time", fontsize=text_size)
+    axes[0].set_ylabel("Cost (px)", fontsize=text_size)
+    axes[0].grid(True, alpha=0.3)
+    axes[0].tick_params(axis="both", labelsize=text_size - 1)
+
+    axes[1].set_xlabel("Planning time", fontsize=text_size)
+    # axes[1].set_ylabel("Cost (px)", fontsize=text_size)
+    axes[1].grid(True, alpha=0.3)
+    axes[1].tick_params(axis="both", labelsize=text_size - 1)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        ncol=3,
+        bbox_to_anchor=(0.5, -0.02),
+        fontsize=text_size - 1,
+        frameon=True,
+    )
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
+
+    fig.savefig(root + "/flappy_cost.pdf", dpi=300, bbox_inches="tight")
+
+    return fig, axes
 
 
 def plot_cases(
     root="results/planning_flappy",
-    title1="AORRT-T Planning Paths Over Time",
-    title2="Planning Paths Comparison",
+    title="",
+    text_size=20,
 ):
+    """Single case-study figure: env + five trajectories, shared method colors."""
     np.random.seed(10)
     env = generate_flappy_env()
-    start, goal, goal_size = env["start"], env["goal"], env["goal_size"]
-    times = np.arange(0.1, 10.01, 0.1)
-
-    # ou.RNG.setSeed(10)
-    # p1 = FlappyPlanner(env["obstacles"], "aorrt", terminal_weight=1.0)
-    # s1, _, _ = p1.plan(start, goal, goal_size, np.arange(0.01, 10.01, 0.01))
-    # s1 = np.array(s1, dtype=object)
-    # np.save(root + "/aorrt_1.0_case_study_states.npy", s1)
-
-    # ou.RNG.setSeed(50)
-    # p2 = FlappyPlanner(env["obstacles"], "aorrt", terminal_weight=0.0)
-    # s2, _, _ = p2.plan(start, goal, goal_size, times)
-    # s2 = np.array(s2, dtype=object)
-    # np.save(root + "/aorrt_0.0_case_study_states.npy", s2)
-
-    # ou.RNG.setSeed(10)
-    # p3 = FlappyPlanner(env["obstacles"], "sst", terminal_weight=0.0)
-    # s3, _, _ = p3.plan(start, goal, goal_size, times)
-    # s3 = np.array(s3, dtype=object)
-    # np.save(root + "/sst_0.0_case_study_states.npy", s3)
 
     s1 = np.load(root + "/aorrt_1.0_case_study_states.npy", allow_pickle=True)
     s2 = np.load(root + "/aorrt_0.0_case_study_states.npy", allow_pickle=True)
@@ -184,44 +266,150 @@ def plot_cases(
         if len(s1[i]) > 1:
             first_i = i
             break
-    inter_i = first_i + int(1 / 0.01)
-    fig, ax = visualize_flappy_env(
-        env,
-        [
-            {"path": s1[-1], "linewidth": 2.5, "label": "AORRT-T Final"},
-            {
-                "path": s1[inter_i],
-                "linewidth": 2.5,
-                "label": "AORRT-T Intermediate",
-            },
-            {"path": s1[first_i], "linewidth": 2.5, "label": "AORRT-T First"},
-        ],
-        title=title1,
-    )
-    fig.savefig(root + "/aorrtt_planning.png", dpi=200, bbox_inches="tight")
+    inter_i = min(first_i + int(1 / 0.01), len(s1) - 1)
+
+    col_aorrt, col_sst, col_kite = "C0", "C9", "C6"
+    lw_base = 2.5
+    # KiTe time-slices: same color, solid lines; distinguish by alpha + linewidth.
+    lw_kite_first, lw_kite_mid, lw_kite_final = 1.0, 1.6, lw_base
+    alpha_kite_first, alpha_kite_mid, alpha_kite_final = 0.6, 0.8, 1.0
+
+    paths = [
+        {
+            "path": s2[-1],
+            "color": col_aorrt,
+            "linestyle": "-",
+            "linewidth": lw_base,
+            "label": None,
+        },
+        {
+            "path": s3[-1],
+            "color": col_sst,
+            "linestyle": "-",
+            "linewidth": lw_base,
+            "label": None,
+        },
+        {
+            "path": s1[first_i],
+            "color": col_kite,
+            "linestyle": "-",
+            "linewidth": lw_kite_first,
+            "alpha": alpha_kite_first,
+            "label": None,
+        },
+        {
+            "path": s1[inter_i],
+            "color": col_kite,
+            "linestyle": "-",
+            "linewidth": lw_kite_mid,
+            "alpha": alpha_kite_mid,
+            "label": None,
+        },
+        {
+            "path": s1[-1],
+            "color": col_kite,
+            "linestyle": "-",
+            "linewidth": lw_kite_final,
+            "alpha": alpha_kite_final,
+            "label": None,
+        },
+    ]
 
     fig, ax = visualize_flappy_env(
         env,
-        [
-            {"path": s3[-1], "linewidth": 2.5, "label": "SST"},
-            {"path": s2[-1], "linewidth": 2.5, "label": "AORRT"},
-            {"path": s1[-1], "linewidth": 2.5, "label": "AORRT-T"},
-        ],
-        title=title2,
+        paths,
+        title=title,
+        text_size=text_size,
+        auto_legend=False,
+        env_legend_labels=False,
     )
-    fig.savefig(root + "/comparison.png", dpi=200, bbox_inches="tight")
 
-    plt.show()
+    legend_handles = [
+        Line2D(
+            [],
+            [],
+            marker="o",
+            color="w",
+            markerfacecolor="C3",
+            markersize=9,
+            linestyle="None",
+            label="Start",
+        ),
+        Patch(
+            facecolor="black",
+            edgecolor="black",
+            alpha=0.8,
+            linewidth=0.5,
+            label="Obstacles",
+        ),
+        Patch(
+            facecolor="#2ca02c",
+            edgecolor="#1f7a1f",
+            alpha=0.55,
+            linewidth=0.5,
+            label="Goal",
+        ),
+        Line2D(
+            [],
+            [],
+            color=col_aorrt,
+            linestyle="-",
+            linewidth=lw_base,
+            label="Base (AO-RRT)",
+        ),
+        Line2D(
+            [],
+            [],
+            color=col_sst,
+            linestyle="-",
+            linewidth=lw_base,
+            label="Base (SST)",
+        ),
+        Line2D(
+            [],
+            [],
+            color=col_kite,
+            linestyle="-",
+            linewidth=lw_kite_first,
+            alpha=alpha_kite_first,
+            label="KiTe (AO-RRT, 1)\nFirst",
+        ),
+        Line2D(
+            [],
+            [],
+            color=col_kite,
+            linestyle="-",
+            linewidth=lw_kite_mid,
+            alpha=alpha_kite_mid,
+            label="KiTe (AO-RRT, 1)\nIntermediate",
+        ),
+        Line2D(
+            [],
+            [],
+            color=col_kite,
+            linestyle="-",
+            linewidth=lw_kite_final,
+            alpha=alpha_kite_final,
+            label="KiTe (AO-RRT, 1)\nFinal",
+        ),
+    ]
+    ax.legend(
+        handles=legend_handles,
+        loc="center left",
+        bbox_to_anchor=(1.0, 0.5),
+        fontsize=text_size - 1,
+        frameon=True,
+    )
+    fig.tight_layout(rect=(0.03, 0, 0.97, 1))
+    fig.savefig(root + "/flappy_demo.pdf", dpi=300, bbox_inches="tight")
+
+    return fig, ax
 
 
 if __name__ == "__main__":
     base = "results/planning_flappy"
 
-    plot_costs(root=base, title="Flappy: SST vs AORRT vs AORRT-T (5x20 runs)")
-    plot_cases(
-        root=base,
-        title1="AORRT-T Planning Paths Over Time",
-        title2="Planning Paths Comparison",
-    )
+    plot_costs(root=base, title="")
+    plot_cases(root=base, title="")
 
     plt.show()

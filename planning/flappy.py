@@ -86,8 +86,27 @@ def generate_flappy_env(
 
 
 ########## Visualization ##########
-def visualize_flappy_env(env, paths=None, title="Flappy Bird Environment"):
-    """Visualize Flappy Bird environment"""
+def visualize_flappy_env(
+    env,
+    paths=None,
+    title="Flappy Bird Environment",
+    text_size=None,
+    auto_legend=True,
+    env_legend_labels=True,
+):
+    """Visualize Flappy Bird environment.
+
+    Parameters
+    ----------
+    text_size : int, optional
+        Font size for axis labels, title, and ticks (legend uses ``text_size - 1``
+        when ``auto_legend`` is True).
+    auto_legend : bool
+        If True, call ``ax.legend`` with default placement.
+    env_legend_labels : bool
+        If False, do not attach legend labels to goal, obstacles, or start (for a
+        custom figure legend built by the caller).
+    """
     obstacles = env["obstacles"]
     start = env["start"]
     goal = env["goal"]
@@ -98,14 +117,12 @@ def visualize_flappy_env(env, paths=None, title="Flappy Bird Environment"):
     ax.set_ylim(0, HEIGHT)
     ax.set_aspect("equal", adjustable="box")
 
-    # Goal region (gradient)
-    draw_gradient_rect(ax, *goal, goal_size, goal_size, label="Goal Region")
-    # Draw obstacles
+    g_lab = "Goal Region" if env_legend_labels else None
+    draw_gradient_rect(ax, *goal, goal_size, goal_size, label=g_lab)
     for i, (cx, cy, w, h) in enumerate(obstacles):
-        label = "Obstacle" if i == 0 else None
-        draw_rect(ax, cx, cy, w, h, 0, "black", alpha=0.6, label=label)
+        label = ("Obstacle" if i == 0 else None) if env_legend_labels else None
+        draw_rect(ax, cx, cy, w, h, 0, "black", alpha=0.8, label=label)
 
-    # Solution path (if any)
     if paths:
         for item in paths:
             path = item.get("path", None)
@@ -123,14 +140,26 @@ def visualize_flappy_env(env, paths=None, title="Flappy Bird Environment"):
                 color=item.get("color", None),
             )
 
-    # Start
     sx, sy, _ = start
-    draw_circle(ax, sx, sy, 10.0, "C8", label="Start")
+    s_lab = "Start" if env_legend_labels else None
+    draw_circle(ax, sx, sy, 10.0, "C3", 1.0, label=s_lab)
 
-    ax.legend(loc="upper left")
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_title(title)
+    if auto_legend:
+        leg_kw = {"loc": "upper left"}
+        if text_size is not None:
+            leg_kw["fontsize"] = text_size - 1
+        ax.legend(**leg_kw)
+    if text_size is not None:
+        ax.set_xlabel("x", fontsize=text_size)
+        ax.set_ylabel("y", fontsize=text_size)
+        if title:
+            ax.set_title(title, fontsize=text_size)
+        ax.tick_params(axis="both", labelsize=text_size - 1)
+    else:
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        if title:
+            ax.set_title(title)
     return fig, ax
 
 
@@ -336,6 +365,7 @@ class FlappyPlanner:
                 ompl_states[i], ompl_states[i + 1]
             ).value()
         terminal_cost = self.obj.terminalCost(ompl_states[-1]).value()
+        # terminal_cost = self.obj.dist_to_goal(ompl_states[-1])
 
         return states, controls, [running_cost, terminal_cost]
 
