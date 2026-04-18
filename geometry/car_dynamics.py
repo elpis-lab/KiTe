@@ -2,15 +2,15 @@ import numpy as np
 from geometry.pose import wrap_to_pi
 
 # Car Constants
-CAR_SIZE = (0.25, 0.11)
+CAR_SIZE = (0.50, 0.22)
 CAR_WHEELBASE = 0.30
 CAR_TRACK_WIDTH = 0.17
 CAR_WHEEL_RADIUS = 0.036
 
 # Covariance constants (Fitted from car_noise.py)
-COV_X = (0.0e-5, 22.0e-5)
-COV_Y = (0.2e-5, 3.0e-5)
-COV_YAW = (0.0e-5, 50.0e-5)
+COV_X = (1.0e-5, 56.0e-5)
+COV_Y = (1.0e-5, 14.0e-5)
+COV_YAW = (1.0e-5, 127.0e-5)
 
 
 def propagate_dt(u, t, init_state=(0, 0, 0, 0), dt=0.1):

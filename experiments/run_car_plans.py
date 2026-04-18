@@ -1,5 +1,7 @@
 import os, sys
 
+from sympy.logic.boolalg import false
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from tqdm import tqdm
@@ -8,11 +10,12 @@ from experiments.run_plans import RunPlans
 from geometry.pose import wrap_to_pi
 from planning.car import POS_RANGES, OBSTACLES, CAR_SIZE, SE2CarPlanner
 from planning.car import SE2CarOptimizationObjective
-from planning.planning_utils import (
-    circles_in_collision,
-    rects_rects_in_collision,
-)
+from planning.planning_utils import circles_in_collision
+from planning.planning_utils import rects_rects_in_collision
 from planning.planning_utils import points_out_of_bound, se2_points_in_region
+from planning.planning_utils import vec_to_cov, cov_to_vec
+from geometry.car_dynamics import propagate_analytical, propagate_cov_linear
+from geometry.car_dynamics import process_cov_body
 from simulation.car_sim import Sim
 
 
@@ -124,27 +127,55 @@ class RunCarPlans(RunPlans):
                     states, goal, self.goal_size
                 )
 
-            # Compute costs from loaded states
+            # Compute costs from execution states
             running_cost, terminal_cost = self.compute_costs(states)
 
             hits.append(hit)
             reacheds.append(reached)
             costs.append([running_cost, terminal_cost])
-        return exec_states, hits, reacheds, np.array(costs)
+        costs = np.array(costs, dtype=float)
 
-    def compute_costs(self, states):
-        """
-        Compute running cost (accumulated SE2 motion cost) and terminal cost
-        (Wasserstein distance to Dirac measure of desired goal).
+        # Compute unified costs in belief space
+        unified_costs = []
+        for i in range(len(plan_states)):
+            states = np.asarray(plan_states[i])
+            controls = np.asarray(plan_controls[i])
+            # initial state
+            unified_states = np.zeros((len(states), 9))
+            unified_states[0, :3] = states[0, :3]
+            unified_states[0, 3:] = [1e-6, 0, 0, 1e-6, 0, 1e-6]
+            # propagate states
+            for j, control in enumerate(controls):
+                curr_state = unified_states[j, :3]
+                curr_cov = vec_to_cov(unified_states[j, 3:])
+                unified_states[j + 1, :3] = propagate_analytical(
+                    control, 1.0, curr_state
+                )
+                process_cov = process_cov_body(control, 1.0)
+                cov = propagate_cov_linear(
+                    control, 1.0, curr_state, curr_cov, process_cov
+                )
+                unified_states[j + 1, 3:] = cov_to_vec(cov)
 
-        Args:
-            states: (N, 3) array of keyframe states [x, y, yaw]
+            # Compute costs in belief space
+            running_cost, terminal_cost = self.compute_costs(
+                unified_states, belief=True
+            )
+            if running_cost == 0:
+                running_cost = -1
+                terminal_cost = -1
+            unified_costs.append([running_cost, terminal_cost])
+        unified_costs = np.array(unified_costs, dtype=float)
 
-        Returns:
-            running_cost: accumulated SE2 motion cost
-            terminal_cost: Wasserstein distance to desired goal
-        """
-        states = np.asarray(states)
+        return exec_states, hits, reacheds, costs, unified_costs
+
+    def compute_costs(self, states, belief=False):
+        """Compute running cost and terminal cost"""
+        covs = [None] * len(states)
+        if belief:
+            for i in range(len(states)):
+                covs[i] = vec_to_cov(states[i, 3:])
+        states = np.asarray(states[:, :3])
         rot_weight = 0.2
         weight = np.diag([1.0, 1.0, rot_weight])
 
@@ -153,16 +184,15 @@ class RunCarPlans(RunPlans):
         for i in range(len(states) - 1):
             # Compute SE2 distance
             r_cost = SE2CarOptimizationObjective.se2_distance(
-                states[i], states[i + 1], weight=weight
+                states[i], states[i + 1], covs[i], covs[i + 1], weight=weight
             )
             running_cost += r_cost
 
         # Terminal cost: distance to desired goal
         desired_goal = self.goals[self.desired_goal]
         terminal_cost = SE2CarOptimizationObjective.se2_distance(
-            states[-1], desired_goal, weight=weight
+            states[-1], desired_goal, covs[-1], weight=weight
         )
-
         return running_cost, terminal_cost
 
     def close(self):
@@ -172,16 +202,22 @@ class RunCarPlans(RunPlans):
 if __name__ == "__main__":
     # Configs (algo, use_var, terminal_weight)
     configs = [
-        # ("sst", "l2", 0.0),  # Vanilla
-        # ("sst", "w2", 0.0),  # Gaussian Belief Trees
-        ("aorrt", "l2", 0.0),  # Vanilla
+        ("aorrt", "l2", 0.0),  # Base
+        ("sst", "l2", 0.0),  # Base
         ("aorrt", "w2", 0.0),  # Gaussian Belief Trees
-        ("aorrt", "l2", 5.0),  # Proposed
-        ("aorrt", "w2", 5.0),  # Proposed
-        ("aorrt", "l2", 20.0),  # Proposed
-        ("aorrt", "w2", 20.0),  # Proposed
-        ("aorrt", "l2", 50.0),  # Proposed
-        ("aorrt", "w2", 50.0),  # Proposed
+        ("sst", "w2", 0.0),  # Gaussian Belief Trees
+        ("aorrt", "l2", 50.0),  # KiTe
+        ("aorrt", "w2", 50.0),  # KiTe
+        ("aorrt", "l2", 20.0),  # KiTe
+        ("aorrt", "w2", 20.0),  # KiTe
+        ("aorrt", "l2", 5.0),  # KiTe
+        ("aorrt", "w2", 5.0),  # KiTe
+        ("aorrt", "l2", 10.0),  # KiTe
+        ("aorrt", "w2", 10.0),  # KiTe
+        ("aorrt", "l2", 100.0),  # KiTe
+        ("aorrt", "w2", 100.0),  # KiTe
+        # ("aorrt", "l2", 200.0),  # KiTe
+        ("aorrt", "w2", 200.0),  # KiTe
     ]
 
     # Execute plans
@@ -189,7 +225,7 @@ if __name__ == "__main__":
         algo = configs[i][0]
         belief = configs[i][1]
         terminal_weight = configs[i][2]
-        print(f"Running {algo} with {belief} and weight {terminal_weight}")
+        print(f"\nRunning {algo} with {belief} and weight {terminal_weight}")
 
         # Goals, goal_size and obstacles are the same for all envs
         envs = np.load("data/planning_car_envs.npy", allow_pickle=True)
@@ -214,7 +250,7 @@ if __name__ == "__main__":
             goal_size,
             0,
             obstacles,
-            load_saved_exec=True,
+            load_saved_exec=False,
             saved_exec_file=f"{folder}/{name}_exec_states.npy",
         )
         results, exec_states = runner.evaluate(
@@ -238,158 +274,4 @@ if __name__ == "__main__":
         print(f"Reached count:\t{np.sum(results[:, :, -1, 2])}")
         print(f"Running Cost:\t{np.mean(results[:, :, -1, 9][mask])}")
         print(f"Terminal Cost:\t{np.mean(results[:, :, -1, 10][mask])}")
-
-        # # TODO
-        # from geometry.pose import vec_to_cov
-        # # Compute average planned running costs from all_states
-        # l2_running_costs = []
-        # w2_running_costs = []
-        # # Iterate through all plans (reps, problems, times)
-        # for rep_idx in range(all_states.shape[0]):
-        #     for prob_idx in range(all_states.shape[1]):
-        #         plan_path = all_states[rep_idx, prob_idx, -1]
-        #         if plan_path is None or len(plan_path) < 2:
-        #             continue
-        #         plan_path = np.asarray(plan_path)
-
-        #         # Compute running cost for this plan
-        #         l2_cost = 0.0
-        #         w2_cost = 0.0
-        #         for i in range(len(plan_path) - 1):
-        #             s1 = plan_path[i]
-        #             s2 = plan_path[i + 1]
-        #             # Extract state and covariance
-        #             state1 = s1[:3]
-        #             state2 = s2[:3]
-        #             cov1 = vec_to_cov(s1[3:])
-        #             cov2 = vec_to_cov(s2[3:])
-
-        #             # L2 distance (no covariance)
-        #             l2_dist = SE2CarOptimizationObjective.se2_distance(
-        #                 state1, state2
-        #             )
-        #             l2_cost += l2_dist
-        #             # W2 distance (with covariance)
-        #             w2_dist = SE2CarOptimizationObjective.se2_distance(
-        #                 state1, state2, cov1, cov2
-        #             )
-        #             w2_cost += w2_dist
-        #         # print(len(plan_path))
-        #         # input()
-        #         l2_running_costs.append(l2_cost)
-        #         w2_running_costs.append(w2_cost)
-        # avg_l2_running_cost = np.mean(l2_running_costs)
-        # avg_w2_running_cost = np.mean(w2_running_costs)
-        # print(f"Planned Running Cost (L2):\t{avg_l2_running_cost:.4f}")
-        # print(f"Planned Running Cost (W2):\t{avg_w2_running_cost:.4f}")
-
-        # # TODO
-        # # Compute average planned terminal costs from all_states
-        # desired_goal = goals[0]  # desired_goal = 0 from line 219
-        # l2_terminal_costs = []
-        # w2_terminal_costs = []
-        # # Iterate through all plans (reps, problems, times)
-        # for rep_idx in range(all_states.shape[0]):
-        #     for prob_idx in range(all_states.shape[1]):
-        #         plan_path = all_states[rep_idx, prob_idx, -1]
-        #         if plan_path is None or len(plan_path) < 2:
-        #             continue
-        #         plan_path = np.asarray(plan_path)
-
-        #         # Get the last state
-        #         last_state_vec = plan_path[-1]
-        #         last_state = last_state_vec[:3]
-
-        #         # L2 terminal cost (no covariance)
-        #         l2_terminal = SE2CarOptimizationObjective.se2_distance(
-        #             last_state, desired_goal
-        #         )
-        #         l2_terminal_costs.append(l2_terminal)
-
-        #         # W2 terminal cost (with covariance, Wasserstein to Dirac at goal)
-        #         cov_last = vec_to_cov(last_state_vec[3:])
-        #         w2_terminal = SE2CarOptimizationObjective.se2_distance(
-        #             last_state, desired_goal, cov_last
-        #         )
-        #         w2_terminal_costs.append(w2_terminal)
-
-        # avg_l2_terminal_cost = np.mean(l2_terminal_costs)
-        # avg_w2_terminal_cost = np.mean(w2_terminal_costs)
-        # print(f"Planned Terminal Cost (L2):\t{avg_l2_terminal_cost:.4f}")
-        # print(f"Planned Terminal Cost (W2):\t{avg_w2_terminal_cost:.4f}")
-
-        # # Cholesky whitening: check if planned covariance matches executed states
-        # # Use last trajectory of each (trial, problem); state cov in global frame.
-        # n_reps, n_problems = all_states.shape[0], all_states.shape[1]
-        # all_whitened = []
-        # all_d2 = []
-        # for rep in range(n_reps):
-        #     for prob in range(n_problems):
-        #         plan_path = all_states[rep, prob, -1]
-        #         if plan_path is None or len(plan_path) < 2:
-        #             continue
-        #         plan_path = np.asarray(plan_path)
-        #         # Executed trajectory for this (rep, prob)
-        #         plan_flat_idx = rep * n_problems + prob
-        #         exec_traj = np.asarray(exec_states[plan_flat_idx])[:, :3]
-
-        #         # compute cholesky whitening
-        #         for i in range(len(plan_path)):
-        #             planned_vec = plan_path[i]
-        #             if len(planned_vec) <= 3:
-        #                 continue
-        #             mu = np.asarray(planned_vec[:3], dtype=float)
-        #             cov = vec_to_cov(planned_vec[3:])
-
-        #             exec_state = exec_traj[i]
-        #             residual = exec_state - mu
-        #             residual[2] = wrap_to_pi(residual[2])
-
-        #             chol = np.linalg.cholesky(cov)
-        #             w = np.linalg.solve(chol, residual)
-        #             all_whitened.append(w)
-        #             d2 = float(w @ w)
-        #             all_d2.append(d2)
-
-        # if all_whitened:
-        #     all_whitened = np.array(all_whitened)
-        #     all_d2 = np.array(all_d2)
-        #     # Chi-squared 3 dof quantiles: fraction of exec states inside that cov region
-        #     chi2 = {"50%": 2.366, "90%": 6.251, "95%": 7.815, "99%": 11.345}
-        #     cover = {k: np.mean(all_d2 <= v) for k, v in chi2.items()}
-
-        #     print(
-        #         "Cholesky whitened (planned cov vs exec; ideal mean~0, std~1):"
-        #     )
-        #     for j, name in enumerate(["x", "y", "yaw"]):
-        #         print(
-        #             f"  {name:>4s}: mean={all_whitened[:, j].mean():+.3f}, "
-        #             f"std={all_whitened[:, j].std(ddof=1):.3f}"
-        #         )
-        #     print(f"  d^2: mean={all_d2.mean():.3f} (ideal ~3.0)")
-        #     print("Coverage:", cover)
-        # else:
-        #     print(
-        #         "Cholesky whitening: no valid (rep,prob,keyframe) with covariance."
-        #     )
-
-        # # TODO
-        # # Visualize
-        # from planning.car import visualize_car_env
-        # import matplotlib.pyplot as plt
-
-        # envs = np.load(f"data/planning_car_envs.npy", allow_pickle=True)
-        # # for j in range(len(envs)):
-        # for j in range(1):
-        #     print(f"Problem {j}:")
-        #     mask = results[:, j, 3] > 0
-        #     print(f"Terminal Cost:\t{np.mean(results[:, j, 10][mask])}")
-        #     print(f"Success:\t{np.mean(results[:, j, 0])}")
-        #     for i in range(len(all_states)):
-        #         visualize_car_env(
-        #             envs[j],
-        #             all_states[i, j, -1],
-        #             exec_states[i * len(envs) + j],
-        #             draw_car_shape=True,
-        #         )
-        #         plt.show()
+        print()

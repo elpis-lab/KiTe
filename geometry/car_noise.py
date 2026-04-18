@@ -20,7 +20,7 @@ def run_sim(
     sim: Sim,
     n_traj: int,
     n_step_range=(1, 31),
-    v_range=(-0.3, 0.3),
+    v_range=(-0.5, 0.5),
     phi_range=(-0.3, 0.3),
     t_candidates=np.array([1.0]),
     return_intermediate=False,
@@ -242,18 +242,17 @@ def validate_sim_stats(params):
     states_list = states_list.tolist()
     controls_list = controls_list.tolist()
 
+    # Combine data
     folder = f"results/planning_car"
     s = []
     c = []
     for name in [
-        "car_aorrt_w2_2.0",
-        "car_aorrt_w2_5.0",
-        "car_aorrt_w2_10.0",
-        "car_aorrt_w2_50.0",
-        "car_aorrt_l2_2.0",
-        "car_aorrt_l2_5.0",
-        "car_aorrt_l2_10.0",
-        "car_aorrt_l2_50.0",
+        # "car_aorrt_w2_0.0",
+        "car_aorrt_w2_20.0",
+        # "car_aorrt_w2_100.0",
+        # "car_aorrt_l2_0.0",
+        "car_aorrt_l2_20.0",
+        # "car_aorrt_l2_100.0",
     ]:
         states_list = np.load(
             f"{folder}/{name}_exec_states.npy", allow_pickle=True
@@ -261,7 +260,13 @@ def validate_sim_stats(params):
         controls_list = np.load(
             f"{folder}/{name}_controls.npy", allow_pickle=True
         )
-        controls_list = controls_list[:, :, -1].reshape(-1)
+        states_list = states_list.reshape(-1)
+        controls_list = controls_list.reshape(-1)
+        # print(len(states_list), len(controls_list))
+        # for i in range(len(states_list)):
+        #     print(len(states_list[i]))
+        #     print(len(controls_list[i]))
+        #     input()
         # remove the index of empty control list
         control_lengths = np.array([len(control) for control in controls_list])
         idx = np.where(control_lengths > 0)[0]
@@ -272,8 +277,8 @@ def validate_sim_stats(params):
                 controls[i][j].append(1.0)
         s.extend(states)
         c.extend(controls)
-    states = np.asarray(s, dtype=object)
-    controls = np.asarray(c, dtype=object)
+    states_list = np.asarray(s, dtype=object)
+    controls_list = np.asarray(c, dtype=object)
 
     all_w = []
     all_d2 = []
@@ -285,7 +290,6 @@ def validate_sim_stats(params):
             continue
         u_i = controls[:, :2]
         t = np.ones(u_i.shape[0])
-        # u_i = controls[:, :2]
         # t = controls[:, 2]
 
         # Mujoco states

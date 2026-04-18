@@ -1,11 +1,12 @@
 import math
 import numpy as np
-from scipy.special import erf
+from scipy.special import erf, gammainc
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon, Ellipse
 
-from geometry.pose import angle_diff
 import ompl.util as ou
+from geometry.pose import angle_diff
+from lie_group.lie_se2 import to_se2_transform, adjoint_se2
 
 
 # OMPL
@@ -261,7 +262,39 @@ def rects_rects_in_collision(pose, shape, rects):
     return hits[0] if single else hits
 
 
-# probability of collision (circles version)
+# Probability of ending inside the goal region (ellipsoid version for SE2)
+def in_goal_region_prob(center_pose, center_cov, goal, goal_size, rot_w):
+    """Probability that SE2 pose is inside weighted goal ball."""
+    center_pose = np.asarray(center_pose, dtype=float)
+    center_cov = np.asarray(center_cov, dtype=float)
+    goal = np.asarray(goal, dtype=float)
+
+    # Mean error in SE2 with wrapped yaw error.
+    diff = center_pose - goal
+    diff[2] = angle_diff(center_pose[2], goal[2])
+
+    # Goal metric is Euclidean in weighted coordinates:
+    # d^2 = dx^2 + dy^2 + (rot_w * dyaw)^2.
+    w = np.diag([1.0, 1.0, float(rot_w)])
+    mu = w @ diff
+    cov = w @ center_cov @ w.T
+    cov = 0.5 * (cov + cov.T) + 1e-12 * np.eye(3)
+
+    # Let q = ||X||^2 where X ~ N(mu, cov); we need P(q <= goal_size^2).
+    # Approximate generalized non-central chi-square q with a Gamma RV
+    # via moment matching (fast and deterministic).
+    r2 = float(goal_size) ** 2
+    mean_q = float(np.trace(cov) + mu @ mu)
+    var_q = float(2.0 * np.trace(cov @ cov) + 4.0 * (mu @ cov @ mu))
+    var_q = max(var_q, 1e-12)
+
+    shape = (mean_q * mean_q) / var_q
+    scale = var_q / mean_q if mean_q > 1e-12 else 1e-12
+    prob = float(gammainc(shape, r2 / scale))
+    return float(np.clip(prob, 0.0, 1.0))
+
+
+# Probability of collision (circles version)
 def circles_in_collision(center_pose, body_circles, obstacles):
     """Check if the circles are in collision"""
     if obstacles is None or len(obstacles) == 0:
@@ -524,9 +557,26 @@ def draw_cov_ellipse(
     return e
 
 
+# Lie Covariance
 def world_2d_cov(yaw, cov):
     """Local 2D covariance to world covariance given rotation yaw"""
     c, s = np.cos(yaw), np.sin(yaw)
     rot = np.array([[c, -s], [s, c]])
     cov_body = np.asarray(cov)[:2, :2]
     return rot @ cov_body @ rot.T
+
+
+def cov_local_tangent_to_world(pose, local_cov):
+    """
+    Convert covariance from local tangent space (body frame) to world frame.
+
+    The state is SE2 (x, y, yaw) and covariance is expressed in the local
+    tangent space at the current pose (e.g. from a belief state propagator).
+    This uses the SE2 adjoint: world_cov = Ad(T) @ local_cov @ Ad(T)^T.
+    """
+    pose = np.asarray(pose, dtype=float)
+    local_cov = np.asarray(local_cov, dtype=float)
+
+    transform = to_se2_transform(pose)
+    adj = adjoint_se2(transform)
+    return adj @ local_cov @ adj.T

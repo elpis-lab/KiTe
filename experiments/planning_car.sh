@@ -15,14 +15,10 @@ beliefs=(
     1
     0
     1
-    0
-    1
 )
 algos=(
     "sst"
     "sst"
-    "aorrt"
-    "aorrt"
     "aorrt"
     "aorrt"
     "aorrt"
@@ -35,8 +31,6 @@ terminal_weights=(
     0.0
     0.0
     0.0
-    5.0
-    5.0
     20.0
     20.0
     50.0

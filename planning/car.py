@@ -15,7 +15,7 @@ from geometry.car_dynamics import process_cov_body, propagate_cov_linear
 from planning.planning_utils import vec_to_cov, cov_to_vec, world_2d_cov
 from planning.planning_utils import approx_rect_to_circles
 from planning.planning_utils import circles_in_collision
-from planning.planning_utils import circles_collision_risk
+from planning.planning_utils import in_goal_region_prob, circles_collision_risk
 from planning.planning_utils import draw_rect, draw_circle, draw_cov_ellipse
 from planning.planning_utils import draw_gradient_circle
 
@@ -49,8 +49,8 @@ def generate_car_env(obstacles=OBSTACLES, safe_start_range=SAFE_RANGE):
     free = [r.copy() for r in POS_RANGES]
     free[0][0] = 0.5 / 3.0 * POS_RANGES[0][1]
     free[0][1] = 1.5 / 3.0 * POS_RANGES[0][1]
-    free[1][0] = 0.75 / 2.0 * POS_RANGES[1][1]
-    free[1][1] = 1.5 / 2.0 * POS_RANGES[1][1]
+    free[1][0] = 0.3 / 1.0 * POS_RANGES[1][1]
+    free[1][1] = 0.7 / 1.0 * POS_RANGES[1][1]
 
     # Find a valid random start
     while True:
@@ -68,7 +68,7 @@ def generate_car_env(obstacles=OBSTACLES, safe_start_range=SAFE_RANGE):
     goals_center[:, 0] = 3.75 * CAR_SIZE[1]
     goals_center[:, 1] = np.array([5.25, 2.25]) * CAR_SIZE[0]
     goals_center[:, 2] = 1.5708
-    goal_size = 0.05
+    goal_size = 0.1
     return {
         "start": start,
         "goals": goals_center,
@@ -188,23 +188,35 @@ class SE2CarPlanner:
         """Initialize the OMPL SE2 planner"""
         bounds = POS_RANGES
         # control_bounds = ((-0.5, 1.0), (-0.3, 0.3))
-        control_bounds = ((-0.3, 0.3), (-0.3, 0.3))
+        control_bounds = ((-0.5, 0.5), (-0.3, 0.3))
         self.c_dim = len(control_bounds)
         self.belief = belief
         self.terminal_weight = terminal_weight
 
         # For collision checking
         self.car_shape = car_shape
-        self.car_circles = approx_rect_to_circles((0, 0, *car_shape), -0.05)
+        self.car_circles = approx_rect_to_circles((0, 0, *car_shape), -0.1)
         self.obstacles = np.asarray(obstacles)
-        self.obstacles_circles = self.approx_obstacles(obstacles)
+        self.obstacles_circles = self.approx_obstacles(obstacles, -0.16)
+
+        # # For debugging, visualize the approximated circular obstacles
+        # fig, ax = plt.subplots(figsize=(8, 8))
+        # for circle in self.car_circles:
+        #     draw_circle(ax, circle[0], circle[1], circle[2], "r", label="Car")
+        # for circle in self.obstacles_circles:
+        #     draw_circle(ax, circle[0], circle[1], circle[2])
+        # draw_rect(ax, 0, 0, car_shape[0], car_shape[1])
+        # for obstacle in obstacles:
+        #     draw_rect(ax, obstacle[0], obstacle[1], obstacle[2], obstacle[3])
+        # ax.set_aspect("equal", adjustable="box")
+        # plt.show()
 
         # Initialize the spaces and set up the planner
         self.space = self.init_state_space(bounds)
         self.control_space = self.init_control_space(control_bounds)
         self.si = oc.SpaceInformation(self.space, self.control_space)
-        self.si.setPropagationStepSize(0.5)
-        self.si.setMinMaxControlDuration(2, 2)
+        self.si.setPropagationStepSize(1.0)
+        self.si.setMinMaxControlDuration(1, 1)
         self.ss = oc.SimpleSetup(self.si)
         self.pdef = self.ss.getProblemDefinition()
         self.set_up_planner(belief, algo, controls)
@@ -290,11 +302,11 @@ class SE2CarPlanner:
         return s
 
     # Validity checkers
-    def approx_obstacles(self, obstacles):
+    def approx_obstacles(self, obstacles, approx_frac=-0.1):
         """Approximate the rectangles obstacles to circles"""
         obs_circles = []
         for i, obstacle in enumerate(obstacles):
-            circle = approx_rect_to_circles(obstacle, -0.08)
+            circle = approx_rect_to_circles(obstacle, approx_frac)
             obs_circles.extend(circle.tolist())
         return np.array(obs_circles)
 
@@ -325,6 +337,19 @@ class SE2CarPlanner:
             )
             return not in_collision
 
+        # cov = vec_to_cov([state.getCovariance(i) for i in range(6)])
+        # risk = circles_collision_risk(
+        #     pose, cov, self.car_circles, self.obstacles_circles
+        # )
+        # in_collision = circles_in_collision(
+        #     pose, self.car_circles, self.obstacles_circles
+        # )
+        # if self.belief:
+        #     return risk <= 0.1
+        # else:
+        #     return not in_collision
+        # return not in_collision
+
     def clearance(self, state):
         """Check the clearance to the nearest obstacle"""
         if len(self.obstacles) == 0:
@@ -354,7 +379,12 @@ class SE2CarPlanner:
         self.ss.setStartState(start_state)
 
         # Set goal
-        self.ss.setGoal(SE2CarGoals(self.si, goals, goal_size))
+        goal_constraint = None
+        # if self.terminal_weight == 0.0 and self.belief:
+        #     goal_constraint = 0.5
+        self.ss.setGoal(
+            SE2CarGoals(self.si, goals, goal_size, goal_constraint)
+        )
         # Set optimization objective
         self.obj = SE2CarOptimizationObjective(
             self.si, goals[desired_goal_idx], self.belief, self.terminal_weight
@@ -442,6 +472,7 @@ class SE2CarPlanner:
                 ompl_states[i], ompl_states[i + 1]
             ).value()
         terminal_cost = self.obj.terminalCost(ompl_states[-1]).value()
+        # terminal_cost = self.obj.dist_to_goal(ompl_states[-1])
 
         return states, controls, [running_cost, terminal_cost]
 
@@ -486,11 +517,14 @@ class CarPropagator(oc.StatePropagator):
 class SE2CarGoals(ob.GoalStates):
     """Goal (represented as a ellipsoid) region for car task"""
 
-    def __init__(self, si, goals, goal_size, rot_weight=0.2):
+    def __init__(
+        self, si, goals, goal_size, goal_constraint=None, rot_weight=0.2
+    ):
         """Initialize the goal for car task"""
         super().__init__(si)
         self.goals = np.asarray(goals)  # (n_goals, 3)
         self.goal_size = goal_size
+        self.goal_constraint = goal_constraint
         self.rot_w = rot_weight
 
         # for GoalStates
@@ -514,6 +548,22 @@ class SE2CarGoals(ob.GoalStates):
 
         d2 = dx**2 + dy**2 + (self.rot_w * dyaw) ** 2
         d = float(np.sqrt(d2.min()))
+
+        # Goal-constrained
+        if self.goal_constraint is not None and d < self.goal_size:
+            pose = np.array([x, y, yaw])
+            cov = vec_to_cov([state.getCovariance(i) for i in range(6)])
+            max_prob = 0.0
+            for goal in self.goals:
+                prob = in_goal_region_prob(
+                    pose, cov, goal, self.goal_size, self.rot_w
+                )
+                max_prob = max(max_prob, prob)
+            if max_prob > self.goal_constraint:
+                return 0
+            else:
+                return d + self.goal_size  # prevent it being a solution
+
         return d
 
 
@@ -547,17 +597,6 @@ class SE2CarOptimizationObjective(ob.PathLengthOptimizationObjective):
         s1_x, s1_y, s1_yaw = s1.getX(), s1.getY(), s1.getYaw()
         s2_x, s2_y, s2_yaw = s2.getX(), s2.getY(), s2.getYaw()
 
-        # TODO
-        # cov1 = vec_to_cov([s1.getCovariance(i) for i in range(6)])
-        # cov2 = vec_to_cov([s2.getCovariance(i) for i in range(6)])
-        # d1, d2 = self.se2_distance(
-        #     [s1_x, s1_y, s1_yaw], [s2_x, s2_y, s2_yaw], cov1, cov2, self.weight
-        # )
-        # if self.belief:
-        #     return ob.Cost(d2)
-        # else:
-        #     return ob.Cost(d1)
-
         if self.belief:
             cov1 = vec_to_cov([s1.getCovariance(i) for i in range(6)])
             cov2 = vec_to_cov([s2.getCovariance(i) for i in range(6)])
@@ -569,6 +608,20 @@ class SE2CarOptimizationObjective(ob.PathLengthOptimizationObjective):
             [s1_x, s1_y, s1_yaw], [s2_x, s2_y, s2_yaw], cov1, cov2, self.weight
         )
         return ob.Cost(dist)
+
+        # cov1 = vec_to_cov([s1.getCovariance(i) for i in range(6)])
+        # cov2 = vec_to_cov([s2.getCovariance(i) for i in range(6)])
+        # dist_b = self.se2_distance(
+        #     [s1_x, s1_y, s1_yaw], [s2_x, s2_y, s2_yaw], cov1, cov2, self.weight
+        # )
+        # dist_r = self.se2_distance(
+        #     [s1_x, s1_y, s1_yaw], [s2_x, s2_y, s2_yaw], None, None, self.weight
+        # )
+
+        # if self.belief:
+        #     return ob.Cost(dist_b)
+        # else:
+        #     return ob.Cost(dist_r)
 
     # Not implemented for multiple goals
     # def costToGo(self, state, goal):
@@ -599,16 +652,6 @@ class SE2CarOptimizationObjective(ob.PathLengthOptimizationObjective):
 
         # state
         x, y, yaw = state.getX(), state.getY(), state.getYaw()
-
-        # TODO
-        # cov = vec_to_cov([state.getCovariance(i) for i in range(6)])
-        # d1, d2 = self.se2_distance(
-        #     [x, y, yaw], self.goal, cov, weight=self.weight
-        # )
-        # if self.belief:
-        #     return ob.Cost(self.terminal_weight * d2)
-        # else:
-        #     return ob.Cost(self.terminal_weight * d1)
 
         # if in belief space, include covariance for Wasserstein distance
         if self.belief:
@@ -660,15 +703,8 @@ class SE2CarOptimizationObjective(ob.PathLengthOptimizationObjective):
 
         # Belief Wasserstein distance to a dirac measure at s2
         if cov2 is None:
-            # TODO
-            # return np.sqrt(dist2), np.sqrt(dist2 + np.trace(cov1))
             return np.sqrt(dist2 + np.trace(cov1))
         cov2 = weight @ cov2 @ weight.T
-
-        # TODO
-        # return np.sqrt(dist2), np.sqrt(
-        #     dist2 + SE2CarOptimizationObjective.bures(cov1, cov2)
-        # )
 
         # Wasserstein distance from one distribution to another
         return np.sqrt(dist2 + SE2CarOptimizationObjective.bures(cov1, cov2))
@@ -701,30 +737,52 @@ if __name__ == "__main__":
     from simulation.car_sim import Sim
 
     set_seed(42)
-    env = generate_car_env()
-    # envs = np.load("data/planning_car_envs.npy", allow_pickle=True)
-    # env = envs[10]
+    # env = generate_car_env()
+    envs = np.load("data/planning_car_envs.npy", allow_pickle=True)
+    env = envs[2]
     visualize_car_env(env, [env["start"]], draw_car_shape=True)
     plt.show()
 
     # Plan
-    algo = "sst"
-    belief = False
+    algo = "aorrt"
+    belief = True
     planner = SE2CarPlanner(
         env["obstacles"],
         CAR_SIZE,
         belief=belief,
         algo=algo,
-        terminal_weight=5.0,
+        terminal_weight=50.0,
     )
     total_time = 30
     times = list(np.linspace(1.0, total_time, total_time))
     states, controls, costs = planner.plan(
         env["start"], env["goals"], env["goal_size"], 0, times
     )
+
+    import pickle
+
+    pickle.dump((states, controls, costs), open("test_data.pkl", "wb"))
+    states, controls, costs = pickle.load(open("test_data.pkl", "rb"))
+
+    # Unified cost in belief space
     for i in range(len(times)):
-        print(f"{times[i]:.2f}: {costs[i][0]:.2f}, {costs[i][1]:.2f}")
-    # print risk
+        running_cost = 0
+        for j in range(len(states[i]) - 1):
+            running_cost += SE2CarOptimizationObjective.se2_distance(
+                states[i][j][:3],
+                states[i][j + 1][:3],
+                vec_to_cov(states[i][j][3:]),
+                vec_to_cov(states[i][j + 1][3:]),
+            )
+        terminal_cost = SE2CarOptimizationObjective.se2_distance(
+            states[i][-1][:3],
+            env["goals"][0],
+            vec_to_cov(states[i][-1][3:]),
+        )
+        print(f"{times[i]:.2f}: {running_cost:.2f}, {terminal_cost:.2f}")
+        # print(f"{times[i]:.2f}: {costs[i][0]:.2f}, {costs[i][1]:.2f}")
+
+    # Test risk computation
     for i in range(len(states[-1])):
         risk = circles_collision_risk(
             states[-1][i][:3],
