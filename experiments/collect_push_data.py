@@ -56,7 +56,7 @@ def collect_data(obj_name, n_data, random_init=True, push_params=None):
     )
     # IK solver
     ik = IK("ur10_rod")
-    # ik = UR10IK("assets/ur10_rod_ik.xml")
+    # ik = UR10IK("assets/ur10_rod_table.xml")
 
     # Initial state parameters
     n_envs, dt = sim.get_sim_info()
