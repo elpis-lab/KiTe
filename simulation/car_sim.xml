@@ -4,7 +4,7 @@
 
   <visual>
     <global offwidth="1920" offheight="1080" />
-    <headlight ambient="0.6 0.6 0.6" diffuse="0.5 0.5 0.5" specular="0.2 0.2 0.2"/>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.5 0.5 0.5" specular="0.2 0.2 0.2"/>
   </visual>
 
   <!-- Car -->

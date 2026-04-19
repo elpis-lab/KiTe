@@ -85,6 +85,8 @@ def plot_main_2x2(all_results, folder, text_size=14):
 
     line_by_key = {}
 
+    kite_desired_goal_count = []
+    other_desired_goal_count = []
     for _, data in all_results.items():
         results = data["results"]
         config = data["config"]
@@ -97,6 +99,14 @@ def plot_main_2x2(all_results, folder, text_size=14):
         running = results[:, :, :, 11].astype(float)
         terminal = results[:, :, :, 12].astype(float)
         valid_mask = (running >= 0.0) & (terminal >= 0.0)
+
+        # Count the number of desired goals reached
+        terminal_last = terminal[:, :, -1].reshape(-1)
+        is_desired = (terminal_last < 1).astype(int).tolist()
+        if float(config[2]) > 0:
+            kite_desired_goal_count.extend(is_desired)
+        else:
+            other_desired_goal_count.extend(is_desired)
 
         running_masked = np.where(valid_mask, running, np.nan)
         terminal_masked = np.where(valid_mask, terminal, np.nan)
@@ -160,6 +170,7 @@ def plot_main_2x2(all_results, folder, text_size=14):
             linestyle=linestyle,
             linewidth=3.5,
         )
+
         # Panel (d): decomposition at 30s as stacked bar
         valid_last = valid_mask[:, :, -1]
         hits_last = collisions[:, :, -1] > 0.5
@@ -177,6 +188,9 @@ def plot_main_2x2(all_results, folder, text_size=14):
             bar_success[key] = success_count / all_cases * 100.0
 
         line_by_key[key] = line
+
+    print("Kite desired goal count: ", np.mean(kite_desired_goal_count))
+    print("Other desired goal count: ", np.mean(other_desired_goal_count))
 
     legend_handles = []
     legend_labels = []
@@ -267,7 +281,7 @@ def plot_main_2x2(all_results, folder, text_size=14):
         legend_handles,
         legend_labels,
         loc="lower center",
-        bbox_to_anchor=(0.37, 0.01),
+        bbox_to_anchor=(0.38, -0.015),
         ncol=2,
         frameon=True,
         fontsize=text_size,
@@ -280,13 +294,13 @@ def plot_main_2x2(all_results, folder, text_size=14):
         decomp_handles,
         [h.get_label() for h in decomp_handles],
         loc="lower center",
-        bbox_to_anchor=(0.87, 0.03),
+        bbox_to_anchor=(0.88, 0.0),
         ncol=1,
         frameon=True,
         fontsize=text_size,
     )
     fig.add_artist(method_legend)
-    fig.tight_layout(rect=[0.0, 0.2, 1.0, 1.0])
+    fig.tight_layout(rect=[0.0, 0.16, 1.0, 1.0])
     ax_d.xaxis.label.set_visible(False)
     plt.savefig(f"{folder}/car_result.pdf")
 

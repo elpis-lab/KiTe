@@ -1,6 +1,7 @@
 # Cache
 .idea/
 .vscode/
+.codex
 __pycache__
 *log.txt
 

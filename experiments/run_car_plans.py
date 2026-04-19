@@ -216,7 +216,7 @@ if __name__ == "__main__":
         ("aorrt", "w2", 10.0),  # KiTe
         ("aorrt", "l2", 100.0),  # KiTe
         ("aorrt", "w2", 100.0),  # KiTe
-        # ("aorrt", "l2", 200.0),  # KiTe
+        ("aorrt", "l2", 200.0),  # KiTe
         ("aorrt", "w2", 200.0),  # KiTe
     ]
 
