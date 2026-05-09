@@ -261,19 +261,17 @@ class SE2CarPlanner:
     def set_up_planner(self, belief, algo, controls):
         """Initialize the planner"""
         # State validity checker
-        self.ss.setStateValidityChecker(
-            ob.StateValidityCheckerFn(self.is_state_valid)
-        )
+        self.ss.setStateValidityChecker(self.is_state_valid)
 
         # State propagator (always propagate belief)
         propagator = CarPropagator(self.si, belief=True)
-        self.ss.setStatePropagator(oc.StatePropagatorFn(propagator.propagate))
+        self.ss.setStatePropagator(propagator.propagate)
 
         # # Control sampler
-        # control_sampler = lambda c_space: ControlSampler(c_space, controls)
-        # self.control_space.setControlSamplerAllocator(
-        #     oc.ControlSamplerAllocator(control_sampler)
+        # control_sampler = lambda c_space: oc.ControlSampler(
+        #     c_space, controls
         # )
+        # self.control_space.setControlSamplerAllocator(control_sampler)
 
         # Optimization objective (set later with goal)
         # obj = SE2PushOptimizationObjective(
@@ -292,13 +290,13 @@ class SE2CarPlanner:
     def get_belief_state(self, state, cov=(1e-6, 0, 0, 1e-6, 0, 1e-6)):
         """Get a scoped state from the state space"""
         # Get a state from the space
-        s = ob.State(self.space)
+        s = self.si.allocState()
         # Set the state values
-        s().setX(float(state[0]))
-        s().setY(float(state[1]))
-        s().setYaw(float(state[2]))
+        s.setX(float(state[0]))
+        s.setY(float(state[1]))
+        s.setYaw(float(state[2]))
         for i in range(6):
-            s().setCovariance(i, float(cov[i]))
+            s.setCovariance(i, float(cov[i]))
         return s
 
     # Validity checkers
@@ -452,8 +450,8 @@ class SE2CarPlanner:
         states = []
         for i in range(path.getStateCount()):
             s = path.getState(i)
-            mean = [s.getX(), s.getY(), s.getYaw()]
-            cov = [s.getCovariance(i) for i in range(6)]
+            mean = [float(s.getX()), float(s.getY()), float(s.getYaw())]
+            cov = [float(s.getCovariance(i)) for i in range(6)]
             ompl_states.append(s)
             states.append(mean + cov)
 
@@ -478,12 +476,11 @@ class SE2CarPlanner:
 
 
 ########## OMPL Components ##########
-class CarPropagator(oc.StatePropagator):
+class CarPropagator:
     """Car propagator with/without belief"""
 
     def __init__(self, si, belief=True):
         """Initialize the car propagator"""
-        super().__init__(si)
         self.si = si
         self.belief = belief
 
@@ -529,10 +526,10 @@ class SE2CarGoals(ob.GoalStates):
 
         # for GoalStates
         for goal in goals:
-            goal_state = ob.State(si.getStateSpace())
-            goal_state().setX(float(goal[0]))
-            goal_state().setY(float(goal[1]))
-            goal_state().setYaw(float(goal[2]))
+            goal_state = si.allocState()
+            goal_state.setX(float(goal[0]))
+            goal_state.setY(float(goal[1]))
+            goal_state.setYaw(float(goal[2]))
             self.addState(goal_state)
         self.setThreshold(goal_size)
 
@@ -567,7 +564,7 @@ class SE2CarGoals(ob.GoalStates):
         return d
 
 
-class SE2CarOptimizationObjective(ob.PathLengthOptimizationObjective):
+class SE2CarOptimizationObjective(ob.OptimizationObjective):
     """SE2 Push Optimization Objective
 
     When belief is True, this uses Wasserstein distance in belief space.
@@ -590,6 +587,8 @@ class SE2CarOptimizationObjective(ob.PathLengthOptimizationObjective):
         self.belief = belief
         self.terminal_weight = terminal_weight
         self.weight = np.diag([1.0, 1.0, rot_weight])
+        # Not implemented for multiple goals
+        # self.setCostToGoHeuristic(self.get_heuristic(self.weight))
 
     def motionCost(self, s1, s2):
         """Compute the cost of the motion from s1 to s2"""
@@ -622,23 +621,6 @@ class SE2CarOptimizationObjective(ob.PathLengthOptimizationObjective):
         #     return ob.Cost(dist_b)
         # else:
         #     return ob.Cost(dist_r)
-
-    # Not implemented for multiple goals
-    # def costToGo(self, state, goal):
-    #     """
-    #     Compute the cost to goal from the current state to the goal region
-    #     This needs to be admissible (under-estimate the true cost)
-    #     """
-    #     threshold = goal.getThreshold()
-    #     goal_state = goal.getState()
-    #     # just skip covariance in the distance computation
-    #     # it will for sure under-estimate the true cost
-    #     dist_to_goal = self.se2_distance(
-    #         [state.getX(), state.getY(), state.getYaw()],
-    #         [goal_state.getX(), goal_state.getY(), goal_state.getYaw()],
-    #         weight=self.weight,
-    #     )
-    #     return ob.Cost(max(dist_to_goal - threshold, 0))
 
     def terminalCost(self, state):
         """
@@ -732,7 +714,8 @@ class SE2CarOptimizationObjective(ob.PathLengthOptimizationObjective):
         return np.trace(cov1) + np.trace(cov2) - 2 * sqrt_tr
 
 
-if __name__ == "__main__":
+def test():
+    import pickle
     from experiments.utils import set_seed
     from simulation.car_sim import Sim
 
@@ -758,11 +741,6 @@ if __name__ == "__main__":
     states, controls, costs = planner.plan(
         env["start"], env["goals"], env["goal_size"], 0, times
     )
-
-    import pickle
-
-    pickle.dump((states, controls, costs), open("test_data.pkl", "wb"))
-    states, controls, costs = pickle.load(open("test_data.pkl", "rb"))
 
     # Unified cost in belief space
     for i in range(len(times)):
@@ -807,3 +785,7 @@ if __name__ == "__main__":
     # Visualization
     visualize_car_env(env, states[-1], exec_states[-1], CAR_SIZE, True)
     plt.show()
+
+
+if __name__ == "__main__":
+    test()

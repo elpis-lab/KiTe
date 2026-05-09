@@ -204,21 +204,15 @@ class FlappyPlanner:
     def set_up_planner(self, planner):
         """Initialize the planner"""
         # State validity checker
-        self.ss.setStateValidityChecker(
-            ob.StateValidityCheckerFn(self.is_state_valid)
-        )
+        self.ss.setStateValidityChecker(self.is_state_valid)
 
         # State propagator
         propagator = FlappyPropagator(self.si)
-        self.ss.setStatePropagator(oc.StatePropagatorFn(propagator.propagate))
+        self.ss.setStatePropagator(propagator.propagate)
 
         # Control sampler
-        control_sampler = lambda c_space: FlappyControlSampler(
-            self.control_space, 0.5
-        )
-        self.control_space.setControlSamplerAllocator(
-            oc.ControlSamplerAllocator(control_sampler)
-        )
+        control_sampler = lambda c_space: FlappyControlSampler(c_space, 0.5)
+        self.control_space.setControlSamplerAllocator(control_sampler)
 
         # Optimization objective (set later with goal)
         # objective = FlappyOptimizationObjective(
@@ -249,18 +243,6 @@ class FlappyPlanner:
             return False
         return True
 
-    def clearance(self, state):
-        """Check the clearance to the nearest obstacle"""
-        x = float(state[0])
-        y = float(state[1])
-        # Distance to world boundaries
-        d_bound = min(x - 0, WIDTH - x, y - 0, HEIGHT - y)
-        d_bound = float("inf")
-        # Distance to closest obstacle
-        d_obs = point_dist_to_rects(x, y, self.obstacles)
-        # return d_obs
-        return min(d_bound, d_obs)
-
     # Planner
     def plan(
         self,
@@ -276,17 +258,17 @@ class FlappyPlanner:
                 raise ValueError("planning_time must be non-decreasing")
 
         # Set start
-        start_state = ob.State(self.space)
-        start_state()[0] = float(start[0])
-        start_state()[1] = float(start[1])
-        start_state()[2] = float(start[2])
+        start_state = self.si.allocState()
+        start_state[0] = float(start[0])
+        start_state[1] = float(start[1])
+        start_state[2] = float(start[2])
         self.ss.setStartState(start_state)
 
         # Set goal
         self.ss.setGoal(FlappyGoal(self.si, goal, goal_size))
         # Set optimization objective
         self.obj = FlappyOptimizationObjective(
-            self.si, self.clearance, goal, self.terminal_weight
+            self.si, self.obstacles, goal, self.terminal_weight
         )
         self.pdef.setOptimizationObjective(self.obj)
 
@@ -350,7 +332,7 @@ class FlappyPlanner:
         for i in range(path.getStateCount()):
             s = path.getState(i)
             ompl_states.append(s)
-            states.append([s[0], s[1], s[2]])
+            states.append([float(s[0]), float(s[1]), float(s[2])])
 
         # Controls
         controls = []
@@ -371,10 +353,12 @@ class FlappyPlanner:
 
 
 ########## OMPL Components ##########
-class FlappyPropagator(oc.StatePropagator):
+class FlappyPropagator:
+    """Flappy propagator"""
+
     def __init__(self, si):
         """Initialize the propagator"""
-        super().__init__(si)
+        self.si = si
 
     def propagate(self, state, control, duration, result):
         """
@@ -414,9 +398,9 @@ class FlappyGoal(ob.GoalState):
         super().__init__(si)
         self.goal = goal  # (x, y)
         self.goal_size = goal_size
-        goal_stat = ob.State(si.getStateSpace())
-        goal_stat()[0], goal_stat()[1] = float(goal[0]), float(goal[1])
-        self.setState(goal_stat)
+        goal_state = si.allocState()
+        goal_state[0], goal_state[1] = float(goal[0]), float(goal[1])
+        self.setState(goal_state)
         self.setThreshold(0.01)
 
     def distanceGoal(self, state):
@@ -427,7 +411,67 @@ class FlappyGoal(ob.GoalState):
         return d
 
 
-class FlappyOptimizationObjective(ob.StateCostIntegralObjective):
+class StateCostIntegralObjective(ob.OptimizationObjective):
+    """Original State Cost Integral Objective implementation in python"""
+
+    def __init__(self, si, enable_motion_cost_interpolation):
+        super().__init__(si)
+        self.si = si
+        self.ss = si.getStateSpace()
+        self.interpolation = enable_motion_cost_interpolation
+
+    def motionCost(self, s1, s2):
+        """Compute the cost of the motion from s1 to s2"""
+        if self.interpolation:
+            total_cost = self.identityCost()
+            nd = self.ss.validSegmentCount(s1, s2)
+
+            temp1 = self.si.cloneState(s1)
+            temp2 = self.si.allocState()
+
+            prev_cost = self.stateCost(temp1)
+            for j in range(1, nd + 1):
+                if j < nd:
+                    t = float(j) / float(nd)
+                    self.ss.interpolate(s1, s2, t, temp2)
+                    curr = temp2
+                else:
+                    curr = s2
+
+                curr_cost = self.stateCost(curr)
+                seg_cost = self.trapezoid(
+                    prev_cost, curr_cost, self.si.distance(temp1, curr)
+                )
+                total_cost = self.combineCosts(total_cost, seg_cost)
+
+                if j < nd:
+                    self.si.copyState(temp1, temp2)
+                prev_cost = curr_cost
+
+            return total_cost
+
+        # No interpolation
+        else:
+            return self.trapezoid(
+                self.stateCost(s1),
+                self.stateCost(s2),
+                self.si.distance(s1, s2),
+            )
+
+    def motionCostBestEstimate(self, s1, s2):
+        return self.trapezoid(
+            self.stateCost(s1), self.stateCost(s2), self.si.distance(s1, s2)
+        )
+
+    @staticmethod
+    def trapezoid(c1, c2, dist):
+        return ob.Cost(0.5 * dist * (c1.value() + c2.value()))
+
+    def isMotionCostInterpolationEnabled(self):
+        return self.interpolation
+
+
+class FlappyOptimizationObjective(StateCostIntegralObjective):
     """
     Optimization objective for flappy bird.
     Integral clearance cost:
@@ -437,25 +481,35 @@ class FlappyOptimizationObjective(ob.StateCostIntegralObjective):
     """
 
     def __init__(
-        self,
-        si,
-        clearance_fn,
-        goal,
-        terminal_weight=1.0,
-        min_clearance=1e-2,
+        self, si, obstacles, goal, terminal_weight=1.0, min_clearance=1e-2
     ):
         """Initialize the optimization objective for flappy bird"""
         super().__init__(si, True)
-        self.clearance_fn = clearance_fn
+        self.si = si
+        self.ss = si.getStateSpace()
+
+        self.obstacles = obstacles
         self.goal = goal
         self.terminal_weight = terminal_weight
         self.min_clearance = min_clearance
 
     def stateCost(self, s):
         """Compute the cost of the state"""
-        c = self.clearance_fn(s)
+        c = self.clearance(s)
         inv_clearance = 1.0 / max(c, self.min_clearance)
         return ob.Cost(inv_clearance)
+
+    def clearance(self, state):
+        """Check the clearance to the nearest obstacle"""
+        x = float(state[0])
+        y = float(state[1])
+        # Distance to world boundaries
+        d_bound = min(x - 0, WIDTH - x, y - 0, HEIGHT - y)
+        d_bound = float("inf")
+        # Distance to closest obstacle
+        d_obs = point_dist_to_rects(x, y, self.obstacles)
+        # return d_obs
+        return min(d_bound, d_obs)
 
     def terminalCost(self, s):
         """Compute the terminal cost, considering only y-coordinate"""
@@ -469,8 +523,7 @@ class FlappyOptimizationObjective(ob.StateCostIntegralObjective):
         return math.hypot(dx, dy)
 
 
-########## Test ##########
-if __name__ == "__main__":
+def test():
     seed = 100
     ou.RNG.setSeed(seed)
     np.random.seed(10)
@@ -496,3 +549,7 @@ if __name__ == "__main__":
         [{"path": states[i]} for i in range(len(times))],
     )
     plt.show()
+
+
+if __name__ == "__main__":
+    test()
