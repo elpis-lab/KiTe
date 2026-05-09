@@ -2,6 +2,7 @@ import math
 import numpy as np
 from scipy.special import erf, gammainc
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 from matplotlib.patches import Polygon, Ellipse
 
 import ompl.util as ou
@@ -506,7 +507,7 @@ def draw_gradient_rect(
 
 
 def draw_cov_ellipse(
-    ax, mean, cov, sigma=2, color="b", alpha=0.5, linewidth=0, label=None
+    ax, mean, cov, sigma=2, color="b", alpha=0.5, linewidth=1.0, label=None
 ):
     """Draw a confidence ellipse for a 2x2 covariance at mean."""
     mean = np.asarray(mean, dtype=float)
@@ -547,9 +548,8 @@ def draw_cov_ellipse(
         width=2 * radii[0],
         height=2 * radii[1],
         angle=angle,
-        facecolor=color,
-        edgecolor=color,
-        alpha=alpha,
+        facecolor=(*to_rgba(color)[:3], alpha),
+        edgecolor=(*to_rgba(color)[:3], 1.0),
         linewidth=linewidth,
         label=label,
     )

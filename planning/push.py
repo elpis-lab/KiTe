@@ -3,6 +3,7 @@ import os, sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 
 import ompl.base as ob
 import ompl.control as oc
@@ -14,7 +15,10 @@ from lie_group.lie_se2 import adjoint_se2, log_se2
 from lie_group.lie_se2 import to_se2_transform, inv_se2_transform
 
 from planning.planning_utils import vec_to_cov, world_2d_cov
-from planning.planning_utils import rects_circles_in_collision
+from planning.planning_utils import cov_local_tangent_to_world
+from planning.planning_utils import approx_rect_to_circles
+from planning.planning_utils import circles_collision_risk
+from planning.planning_utils import circles_in_collision
 from planning.planning_utils import draw_rect, draw_circle, draw_cov_ellipse
 from planning.planning_utils import draw_gradient_circle
 
@@ -39,9 +43,14 @@ def generate_push_env(obstacles=OBSTACLES, safe_start_range=0.15):
     # Obstacles are circles
     obstacles = np.asarray(obstacles)
     # Find a valid random start
+    start_range = [list(POS_RANGES[0]), list(POS_RANGES[1])]
+    start_range[0][0] += 0.05
+    start_range[0][1] -= 0.05
+    start_range[1][0] += 0.05
+    start_range[1][1] -= 0.05
     while True:
         # generate a random state
-        start = get_random_se2_states(1)[0]
+        start = get_random_se2_states(1, start_range)[0]
         # check clearance
         dists = np.linalg.norm(start[:2] - obstacles[:, :2], axis=-1)
         clearance = dists - (obstacles[:, 2] + safe_start_range)
@@ -66,7 +75,9 @@ def visualize_push_env(
     path=None,
     exec_path=None,
     obj_shape=None,
-    title="Object Push Environment",
+    color="C0",
+    title="",
+    legend=True,
 ):
     """Visualize Object Push Environment"""
     (xmin, xmax), (ymin, ymax) = POS_RANGES
@@ -85,7 +96,7 @@ def visualize_push_env(
     fig, ax = plt.subplots(figsize=(8, 8))
     # Background table
     # draw_rect(ax, 0, -0.505, 1.524, 1.524, 0, "k", alpha=0.1)
-    draw_rect(ax, tx, ty, tw, th, 0, "k", alpha=0.1)
+    draw_rect(ax, tx, ty, tw, th, 0, "k", alpha=0.05)
     # # Robot
     # draw_rect(ax, 0, 0, 0.2, 0.2, 0, "gray", alpha=0.5, label="Robot")
 
@@ -104,7 +115,8 @@ def visualize_push_env(
 
     # Planned path (x, y)
     if path is not None:
-        ax.plot(path[:, 0], path[:, 1], "o-", color="C0", label="Planned Path")
+        ax.plot(path[:, 0], path[:, 1], "-", color=color, label="Planned Path")
+        ax.plot(path[:, 0], path[:, 1], "o", color="black", markersize=3)
 
         # if covariance provided, plot
         if path.shape[1] > 3:
@@ -112,8 +124,8 @@ def visualize_push_env(
                 x, y, yaw = state[:3]
                 cov_world = world_2d_cov(yaw, vec_to_cov(state[3:]))
                 label = "Belief" if i == 0 else None
-                draw_cov_ellipse(
-                    ax, (x, y), cov_world, 2.0, "C9", 0.5, label=label
+                ell = draw_cov_ellipse(
+                    ax, (x, y), cov_world, 2.0, color, 0.5, 1.0, label=label
                 )
 
     # Executed path (x, y)
@@ -122,7 +134,7 @@ def visualize_push_env(
             exec_path[:, 0],
             exec_path[:, 1],
             "o-",
-            color="C5",
+            color="C3",
             label="Actual Path",
         )
 
@@ -131,12 +143,12 @@ def visualize_push_env(
         if path is not None:
             for state in path:
                 x, y, yaw = state[:3]
-                draw_rect(ax, x, y, w, h, yaw, "C0", alpha=0.1)
+                draw_rect(ax, x, y, w, h, yaw, color, alpha=0.1)
 
         if exec_path is not None:
             for state in exec_path:
                 x, y, yaw = state[:3]
-                draw_rect(ax, x, y, w, h, yaw, "C5", alpha=0.1)
+                draw_rect(ax, x, y, w, h, yaw, "C3", alpha=0.1)
 
     # Start
     draw_circle(ax, start[0], start[1], 0.01, "C8", label="Start")
@@ -150,8 +162,10 @@ def visualize_push_env(
     ax.set_ylim(ty - plot_size, ty + plot_size)
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
-    ax.set_title(title)
-    ax.legend()
+    if title:
+        ax.set_title(title)
+    if legend:
+        ax.legend()
     return fig, ax
 
 
@@ -179,12 +193,16 @@ class SE2PushPlanner:
 
         # For collision checking
         self.obj_shape = obj_shape
+        w, h = obj_shape[0], obj_shape[1]
+        self.obj_circles = approx_rect_to_circles((0, 0, w, h), margin=-0.04)
         self.obstacles = np.asarray(obstacles)
 
         # Initialize the spaces and set up the planner
         self.space = self.init_state_space(bounds)
         self.control_space = self.init_control_space(control_bounds)
-        self.si = ControlSpaceInformation(self.space, self.control_space, 0.5)
+        self.si = oc.SpaceInformation(self.space, self.control_space)
+        self.si.setPropagationStepSize(1.0)
+        self.si.setMinMaxControlDuration(1, 1)
         self.ss = oc.SimpleSetup(self.si)
         self.pdef = self.ss.getProblemDefinition()
         self.set_up_planner(model, x_train, belief, algo, controls)
@@ -236,13 +254,11 @@ class SE2PushPlanner:
     ):
         """Initialize the planner"""
         # State validity checker
-        self.ss.setStateValidityChecker(
-            ob.StateValidityCheckerFn(self.is_state_valid)
-        )
+        self.ss.setStateValidityChecker(self.is_state_valid)
 
         # State propagator
-        propagator = SE2BeliefPropagator(self.si, model)
-        self.ss.setStatePropagator(oc.StatePropagatorFn(propagator.propagate))
+        propagator = SE2BeliefPropagator(self.si, model, 0.5)
+        self.ss.setStatePropagator(propagator.propagate)
 
         # Control sampler
         # Active sampling with epistemic uncertainty if given training data
@@ -254,9 +270,7 @@ class SE2PushPlanner:
             control_sampler = lambda c_space: ControlBatchSampler(
                 self.space, c_space, model, controls
             )
-        self.control_space.setControlSamplerAllocator(
-            oc.ControlSamplerAllocator(control_sampler)
-        )
+        self.control_space.setControlSamplerAllocator(control_sampler)
 
         # Optimization objective (set later with goal)
         # obj = SE2PushOptimizationObjective(
@@ -269,52 +283,49 @@ class SE2PushPlanner:
             planner = oc.AORRT(self.si)
         else:
             planner = oc.SST(self.si)
-            # planner.setPruningRadius(0.03)
+            planner.setPruningRadius(0.03)
         self.ss.setPlanner(planner)
-        self.si.setPropagationStepSize(1.0)
-        self.si.setMinMaxControlDuration(1, 1)
 
     def get_belief_state(self, state, cov=(1e-6, 0, 0, 1e-6, 0, 1e-6)):
         """Get a scoped state from the state space"""
         # Get a state from the space
-        s = ob.State(self.space)
+        s = self.si.allocState()
         # Set the state values
-        s().setX(float(state[0]))
-        s().setY(float(state[1]))
-        s().setYaw(float(state[2]))
+        s.setX(float(state[0]))
+        s.setY(float(state[1]))
+        s.setYaw(float(state[2]))
         for i in range(6):
-            s().setCovariance(i, float(cov[i]))
+            s.setCovariance(i, float(cov[i]))
         return s
 
     # Validity checkers
     def is_state_valid(self, state):
-        """Check if the state is in the bounds"""
+        """Check if the state is in the bounds and if in collision"""
         # In bounds
         in_bounds = self.si.satisfiesBounds(state)
         if not in_bounds:
             return False
 
         # In collision
-        if len(self.obstacles) > 0:
-            pose = np.array([state.getX(), state.getY(), state.getYaw()])
-            in_collision = rects_circles_in_collision(
-                pose, self.obj_shape, self.obstacles
+        if len(self.obstacles) == 0:
+            return True
+        pose = np.array([state.getX(), state.getY(), state.getYaw()])
+
+        # chance constrained
+        if self.belief:
+            # covariance is in local tangent space, convert to world
+            local_cov = vec_to_cov([state.getCovariance(i) for i in range(6)])
+            world_cov = cov_local_tangent_to_world(pose, local_cov)
+            risk = circles_collision_risk(
+                pose, world_cov, self.obj_circles, self.obstacles
             )
-            if in_collision:
-                return False
+            return risk <= 0.05
 
-        return True
-
-    def clearance(self, state):
-        """Check the clearance to the nearest obstacle"""
-        if len(self.obstacle_poses) == 0:
-            return 0
-
-        dists = np.linalg.norm(
-            np.array([state.getX(), state.getY()]) - self.obstacle_poses,
-            axis=1,
+        # regular collision checking
+        in_collision = circles_in_collision(
+            pose, self.obj_circles, self.obstacles
         )
-        return np.min(dists)
+        return not in_collision
 
     # Plan
     def plan(
@@ -327,7 +338,9 @@ class SE2PushPlanner:
     ):
         """Plan to goal"""
         # Set start
-        start_state = self.get_belief_state([start[0], start[1], start[2]])
+        if isinstance(start, np.ndarray):
+            start = start.tolist()
+        start_state = self.get_belief_state(start[:3])
         self.ss.setStartState(start_state)
 
         # Set goal
@@ -362,12 +375,14 @@ class SE2PushPlanner:
             ):
                 if verbose:
                     print(f"No new solution found for timestep {t_i}: {t}")
-                if t_i > 0 and len(controls_over_time[t_i - 1]) > 0:
+                if t_i > 0:
                     states_over_time[t_i] = states_over_time[t_i - 1]
                     controls_over_time[t_i] = controls_over_time[t_i - 1]
                     costs_over_time[t_i] = costs_over_time[t_i - 1]
                 else:
-                    states_over_time[t_i] = [start]
+                    states_over_time[t_i] = [
+                        start[:3] + [1e-6, 0, 0, 1e-6, 0, 1e-6]
+                    ]
                     controls_over_time[t_i] = []
                     costs_over_time[t_i] = [-1.0, -1.0]
 
@@ -397,8 +412,8 @@ class SE2PushPlanner:
         states = []
         for i in range(path.getStateCount()):
             s = path.getState(i)
-            mean = [s.getX(), s.getY(), s.getYaw()]
-            cov = [s.getCovariance(i) for i in range(6)]
+            mean = [float(s.getX()), float(s.getY()), float(s.getYaw())]
+            cov = [float(s.getCovariance(i)) for i in range(6)]
             ompl_states.append(s)
             states.append(mean + cov)
 
@@ -420,89 +435,63 @@ class SE2PushPlanner:
 
         return states, controls, [running_cost, terminal_cost]
 
+    def close(self):
+        """
+        Clean control sampler allocator to avoid leaking memory
+        This is specifically needed because the sampler takes a neural network
+        model as input, which amy not be handled properly by itself.
+        """
+        self.control_space.clearControlSamplerAllocator()
+
 
 ########## OMPL Components ##########
-class ControlSpaceInformation(oc.SpaceInformation):
-    """
-    A control space information that runs collision checking differently.
-
-    Unlike geometric collision checking which uses interpolation,
-    regular control collision checking checks intermediate state validity.
-
-    However, the "control" defined here is single-step push action, so
-    there is no intermediate states. This class runs interpolation
-    to simulate the intermediate state.
-    """
-
-    def __init__(self, space, control_space, step_size=0.5):
-        super().__init__(space, control_space)
-        # step size is considered to be the interpolation resolution
-        self.step_size = min(step_size, 1.0)
-
-    def propagateWhileValid(self, state, control, steps, result):
-        """
-        Override the default validity checking to
-        have intermediate collision checking
-        """
-        # Steps does not matter as long as it is non-zero
-        if steps == 0:
-            if result != state:
-                self.copyState(result, state)
-            return 0
-
-        # Propagate the state
-        self.getStatePropagator().propagate(state, control, 1.0, result)
-
-        # Start to check validity (from step_size * result to 1 * result)
-        valid = True
-        temp = self.allocState()
-        space = self.getStateSpace()
-        t = 0
-        while t < 1.0:
-            t = min(t + self.step_size, 1.0)
-            space.interpolate(state, result, t, temp)
-            if not self.isValid(temp):
-                valid = False
-                break
-        self.freeState(temp)
-
-        # Valid
-        if valid:
-            return steps
-        # Invalid
-        if result != state:
-            self.copyState(result, state)
-        return 0
-
-
 class SE2BeliefPropagator(oc.SE2BeliefPropagator):
     """
     See ControlBatchSampler for more details.
+    The control contains both the control values and control effect (delta state).
+
     Propagator is now only responsible to propagate given the
     control effect (delta state), but not based on the individual control values.
 
-    The control contains both the control values and control effect (delta state).
+    Additionally, for collision checking purpose, step size is set to <= 1.0
+    as interpolation. Assuming that step_size * control_duration = 1.0.
     """
 
-    def __init__(self, si, model):
+    def __init__(self, si, model, step_size=1.0):
         """Initialize the SE2 belief propagator"""
         super().__init__(si)
+        self.si = si
         self.space = si.getStateSpace()
         self.model = model
         dim = si.getControlSpace().getDimension()
         s_dim = self.space.getDimension()
         self.c_dim = dim - s_dim
+        # collision interpolation step size
+        self.step_size = step_size
 
     def propagate(self, state, control, duration, result):
         """Extract the delta state from the control values and propagate"""
         # Create delta state
-        delta_state = ob.State(self.space)
-        delta_state().setX(float(control[self.c_dim + 0]))
-        delta_state().setY(float(control[self.c_dim + 1]))
-        delta_state().setYaw(float(control[self.c_dim + 2]))
+        delta_state = self.si.allocState()
+        delta_state.setX(float(control[self.c_dim + 0]))
+        delta_state.setY(float(control[self.c_dim + 1]))
+        delta_state.setYaw(float(control[self.c_dim + 2]))
         for i in range(6):
-            delta_state().setCovariance(i, float(control[self.c_dim + 3 + i]))
+            delta_state.setCovariance(i, float(control[self.c_dim + 3 + i]))
         self.propagateSE2Belief(state, delta_state, result)
+
+        # Start to check validity [step_size * result, 1 * result)
+        temp = self.si.allocState()
+        t = self.step_size
+        while t < 1.0:
+            self.si.getStateSpace().interpolate(state, result, t, temp)
+            # if we found invalid state, break
+            # set the result to be this state so that this control
+            # will be rejected in the planner
+            if not self.si.isValid(temp):
+                self.si.copyState(result, temp)
+                break
+            t += self.step_size
 
 
 class ControlBatchSampler(oc.ControlSampler):
@@ -722,10 +711,10 @@ class SE2PushGoal(ob.GoalState):
         self.rot_w = rot_weight
 
         # for GoalState
-        goal_state = ob.State(si.getStateSpace())
-        goal_state().setX(float(goal[0]))
-        goal_state().setY(float(goal[1]))
-        goal_state().setYaw(float(goal[2]))
+        goal_state = si.allocState()
+        goal_state.setX(float(goal[0]))
+        goal_state.setY(float(goal[1]))
+        goal_state.setYaw(float(goal[2]))
         self.setState(goal_state)
         self.setThreshold(goal_size)
 
@@ -738,7 +727,7 @@ class SE2PushGoal(ob.GoalState):
         return d
 
 
-class SE2PushOptimizationObjective(ob.PathLengthOptimizationObjective):
+class SE2PushOptimizationObjective(ob.OptimizationObjective):
     """SE2 Push Optimization Objective
 
     When belief is True, this uses Wasserstein distance in belief space.
@@ -762,40 +751,7 @@ class SE2PushOptimizationObjective(ob.PathLengthOptimizationObjective):
         self.terminal_weight = terminal_weight
         self.weight = np.diag([1.0, 1.0, rot_weight])
 
-    def se2_distance(self, s1, s2, cov1=None, cov2=None):
-        """
-        Compute the Lie SE2 distance between two states
-        When no covariance is provided, this is regular SE2 distance.
-        When both covariances are provided, this is Wasserstein distance.
-        When only one covariance is provided, this is Wasserstein distance
-        from a distribution to a dirac measure.
-        """
-        # Log-based SE2 distance
-        t1 = to_se2_transform(s1)
-        t2 = to_se2_transform(s2)
-        t_delta = inv_se2_transform(t1) @ t2
-        # apply weights
-        dist_vec = self.weight @ log_se2(t_delta)
-        # distance squared
-        dist2 = dist_vec.T @ dist_vec
-
-        # No belief state
-        if cov1 is None:
-            return np.sqrt(dist2)
-        # apply weights
-        cov1 = self.weight @ cov1 @ self.weight.T
-
-        # Belief Wasserstein distance to a dirac measure at s2
-        if cov2 is None:
-            return np.sqrt(dist2 + np.trace(cov1))
-
-        # Wasserstein distance from one distribution to another
-        # express cov2 in the frame of cov1
-        adj = adjoint_se2(t_delta)
-        cov2 = adj @ cov2 @ adj.T
-        # apply weights
-        cov2 = self.weight @ cov2 @ self.weight.T
-        return np.sqrt(dist2 + self.bures(cov1, cov2))
+        self.setCostToGoHeuristic(self.get_heuristic(self.weight))
 
     def motionCost(self, s1, s2):
         """Compute the cost of the motion from s1 to s2"""
@@ -810,25 +766,9 @@ class SE2PushOptimizationObjective(ob.PathLengthOptimizationObjective):
             cov2 = None
 
         dist = self.se2_distance(
-            [s1_x, s1_y, s1_yaw], [s2_x, s2_y, s2_yaw], cov1, cov2
+            [s1_x, s1_y, s1_yaw], [s2_x, s2_y, s2_yaw], cov1, cov2, self.weight
         )
         return ob.Cost(dist)
-
-    def costToGo(self, state, goal):
-        """
-        Compute the cost to goal from the current state to the goal region
-        This needs to be admissible (under-estimate the true cost)
-        """
-        threshold = goal.getThreshold()
-        goal_state = goal.getState()
-        # no covariance in goal state, simply assume goal cov
-        # is the same as state cov
-        # then we can just skip covariance in the distance computation
-        dist_to_goal = self.se2_distance(
-            [state.getX(), state.getY(), state.getYaw()],
-            [goal_state.getX(), goal_state.getY(), goal_state.getYaw()],
-        )
-        return ob.Cost(max(dist_to_goal - threshold, 0))
 
     def terminalCost(self, state):
         """
@@ -849,8 +789,75 @@ class SE2PushOptimizationObjective(ob.PathLengthOptimizationObjective):
             cov = None
 
         # regular SE2 distance
-        dist = self.se2_distance([x, y, yaw], self.goal, cov)
+        dist = self.se2_distance(
+            [x, y, yaw], self.goal, cov, weight=self.weight
+        )
         return ob.Cost(self.terminal_weight * dist)
+
+    @staticmethod
+    def get_heuristic(weight):
+        """Make the push heuristic"""
+
+        def heuristic(state, goal):
+            """Compute the cost to goal from the current state"""
+            threshold = goal.getThreshold()
+            goal_state = goal.getState()
+
+            dist_to_goal = SE2PushOptimizationObjective.se2_distance(
+                [state.getX(), state.getY(), state.getYaw()],
+                [goal_state.getX(), goal_state.getY(), goal_state.getYaw()],
+                weight=weight,
+            )
+            return ob.Cost(max(dist_to_goal - threshold, 0.0))
+
+        return heuristic
+
+    @staticmethod
+    def se2_distance(
+        s1, s2, cov1=None, cov2=None, weight=np.diag([1.0, 1.0, 0.2])
+    ):
+        """
+        Compute the Linearized SE2 distance between two states
+
+        When no covariance is provided, this is regular SE2 distance.
+        When both covariances are provided, this is Wasserstein distance.
+        When only one covariance is provided, this is Wasserstein distance
+        from a distribution to a dirac measure.
+        """
+        if weight.shape == (3,):
+            weight = np.diag(weight)
+        elif weight.shape == (3, 3):
+            pass
+        else:
+            raise ValueError(
+                f"Invalid SE2 weight shape: {weight.shape}, "
+                + "expected (3,) or (3, 3)"
+            )
+
+        # Log-based SE2 distance
+        t1 = to_se2_transform(s1)
+        t2 = to_se2_transform(s2)
+        t_delta = inv_se2_transform(t1) @ t2
+        # apply weights
+        dist_vec = weight @ log_se2(t_delta)
+        # distance squared
+        dist2 = dist_vec.T @ dist_vec
+
+        # No belief state
+        if cov1 is None:
+            return np.sqrt(dist2)
+        cov1 = weight @ cov1 @ weight.T
+
+        # Belief Wasserstein distance to a dirac measure at s2
+        if cov2 is None:
+            return np.sqrt(dist2 + np.trace(cov1))
+        # express cov2 in the frame of cov1
+        adj = adjoint_se2(t_delta)
+        cov2 = adj @ cov2 @ adj.T
+        cov2 = weight @ cov2 @ weight.T
+
+        # Wasserstein distance from one distribution to another
+        return np.sqrt(dist2 + SE2PushOptimizationObjective.bures(cov1, cov2))
 
     @staticmethod
     def bures(cov1, cov2):
@@ -875,11 +882,11 @@ class SE2PushOptimizationObjective(ob.PathLengthOptimizationObjective):
         return np.trace(cov1) + np.trace(cov2) - 2 * sqrt_tr
 
 
-########## Test ##########
-if __name__ == "__main__":
+def test():
     from geometry.object_model import get_obj_shape
     from experiments.train_push_model import load_model
-    from experiments.run_push_plans_pool import run_plans_pool
+
+    # from experiments.run_push_plans import RunPushPlansPool
     from experiments.utils import DataLoader, set_seed, get_names
 
     set_seed(10)
@@ -895,7 +902,7 @@ if __name__ == "__main__":
     n_data = 1000
     m_id = 0
     # Load object
-    obj_name = "cracker_box_flipped"
+    obj_name = "trash_truck"
     model_name, data_name, rep_data_name = get_names(obj_name)
     obj_shape = get_obj_shape(f"assets/{model_name}/textured.obj")
     # Load trained model
@@ -922,26 +929,35 @@ if __name__ == "__main__":
         x_train=None,
         belief=belief,
         algo=algo,
-        terminal_weight=2.0,
+        terminal_weight=20.0,
         controls=control_list,
     )
-    times = list(np.linspace(1.0, 30.0, 30))
+    # times = list(np.linspace(1.0, 30.0, 30))
+    times = list(np.linspace(1.0, 10.0, 10))
     states, controls, costs = planner.plan(
-        env["start"], env["goal"], env["goal_size"], times
+        env["start"], env["goal"], env["goal_size"], planning_times=times
     )
+    planner.close()
     for i in range(len(times)):
         print(f"{times[i]:.2f}: {costs[i][0]:.2f}, {costs[i][1]:.2f}")
 
-    # Execution
-    exec_path, _, _ = run_plans_pool(
-        obj_name,
-        [states[-1]],
-        [controls[-1]],
-        obj_shape,
-        env["obstacles"],
-        dataset,
-    )
+    # # Execution
+    # exec_path, _, _ = run_plans_pool(
+    #     obj_name,
+    #     [states[-1]],
+    #     [controls[-1]],
+    #     obj_shape,
+    #     env["obstacles"],
+    #     dataset,
+    # )
+    # exec_states = exec_path[-1]
+    exec_states = None
 
     # Visualization
-    visualize_push_env(env, states[-1], exec_path[-1], obj_shape=None)
+    visualize_push_env(env, states[-1], exec_states, obj_shape=obj_shape)
     plt.show()
+
+
+########## Test ##########
+if __name__ == "__main__":
+    test()

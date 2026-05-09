@@ -6,17 +6,17 @@ start_time=$(date +%s)
 
 # List of object name
 objs=(
-    cracker_box_flipped
-    # banana
+    mustard_bottle_flipped
     master_chef_can_flipped
-    trash_truck
-    # real_cracker_box_flipped
-    # real_trash_truck
+    real_cracker_box_flipped
+    real_trash_truck
 )
 model_type="mlp"
 n_datas=(
-    100
-    500
+    # 200
+    # 400
+    # 600
+    # 800
     1000
 )
 
@@ -24,34 +24,42 @@ n_datas=(
 use_vars=(
     0
     0
-    # 1
-    # 1
+    1
+    1
     0
-    # 1
+    0
+    0
+    1
 )
 algos=(
     "aorrt"
     "sst"
-    # "aorrt"
-    # "sst"
     "aorrt"
-    # "aorrt"
+    "sst"
+    "aorrt"
+    "sst"
+    "aorrt"
+    "aorrt"
 )
 active_samplings=(
-    1
-    1
-    # 0
-    # 0
     0
-    # 0
+    0
+    0
+    0
+    1
+    1
+    0
+    0
 )
 terminal_weights=(
     0.0
     0.0
-    # 0.0
-    # 0.0
-    2.0
-    # 2.0
+    0.0
+    0.0
+    0.0
+    0.0
+    20.0
+    20.0
 )
 n_reps=5
 
@@ -65,7 +73,8 @@ for obj in "${objs[@]}"; do
             active_sampling="${active_samplings[$i]}"
             terminal_weight="${terminal_weights[$i]}"
 
-            echo "=== Planning: ${obj}; ${model_type} with ${n_data} and var ${use_var}; Planner ${algo} active: ${active_sampling} tw: ${terminal_weight} with ${n_reps} reps ==="
+            echo "=== Planning: ${obj}; ${model_type} with ${n_data} and var ${use_var};"
+            echo "Planner ${algo} active: ${active_sampling} tw: ${terminal_weight} with ${n_reps} reps ==="
             python "$script_dir/planning_push.py" \
                 "$obj" "$model_type" "$use_var" "$n_data" \
                 "$algo" "$active_sampling" "$terminal_weight" "$n_reps" &
