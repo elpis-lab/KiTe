@@ -163,7 +163,7 @@ def project_se3_pose(poses, axis=[0, 1, 0]):
 
 
 if __name__ == "__main__":
-    args = parse_args([("obj_name", "cracker_box_flipped")])
+    args = parse_args([("obj_name", "mustard_bottle_flipped")])
     os.makedirs("data", exist_ok=True)
     set_seed(42)
 

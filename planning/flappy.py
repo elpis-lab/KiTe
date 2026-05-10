@@ -534,9 +534,8 @@ def test():
     visualize_flappy_env(env)
     plt.show()
 
-    planner = FlappyPlanner(env["obstacles"], "sst", terminal_weight=1.0)
-    # times = list(np.linspace(0.1, 10.0, 100))
-    times = [0.1, 0.4, 10.0]
+    planner = FlappyPlanner(env["obstacles"], "aorrt", terminal_weight=1.0)
+    times = [0.5, 1.0, 10.0]
     states, controls, costs = planner.plan(
         env["start"], env["goal"], env["goal_size"], times
     )
@@ -545,7 +544,6 @@ def test():
 
     visualize_flappy_env(
         env,
-        # [{"path": states[0], "color": "red"}],
         [{"path": states[i]} for i in range(len(times))],
     )
     plt.show()

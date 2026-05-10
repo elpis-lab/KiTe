@@ -330,8 +330,8 @@ def workspace_worldbody_overlay(
 
     obstacles = np.asarray(env.get("obstacles", []), dtype=float)
     goals = np.asarray(env.get("goals", []), dtype=float)
-    # goal_size = float(env.get("goal_size", 0.05))
-    goal_size = 0.075
+    goal_size = float(env.get("goal_size", 0.075))
+    # goal_size = 0.075
 
     lines = []
     lines.append("  <worldbody>")
@@ -398,8 +398,8 @@ def build_car_visualization_xml(
     env,
     base_xml_path=None,
     pos_ranges=None,
-    obstacle_height=0.25,
-    goal_height=0.01,
+    obstacle_height=0.05,
+    goal_height=0.03,
     trajectory_c4=None,
     trajectory_c0=None,
 ):

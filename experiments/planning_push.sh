@@ -21,7 +21,7 @@ n_datas=(
 )
 
 # These have the same length
-use_vars=(
+beliefs=(
     0
     0
     1
@@ -68,15 +68,15 @@ for obj in "${objs[@]}"; do
     for n_data in "${n_datas[@]}"; do
 
         for i in "${!algos[@]}"; do
-            use_var="${use_vars[$i]}"
+            belief="${beliefs[$i]}"
             algo="${algos[$i]}"
             active_sampling="${active_samplings[$i]}"
             terminal_weight="${terminal_weights[$i]}"
 
-            echo "=== Planning: ${obj}; ${model_type} with ${n_data} and var ${use_var};"
+            echo "=== Planning: ${obj}; ${model_type} with ${n_data} and belief ${belief};"
             echo "Planner ${algo} active: ${active_sampling} tw: ${terminal_weight} with ${n_reps} reps ==="
             python "$script_dir/planning_push.py" \
-                "$obj" "$model_type" "$use_var" "$n_data" \
+                "$obj" "$model_type" "$n_data" "$belief" \
                 "$algo" "$active_sampling" "$terminal_weight" "$n_reps" &
             echo
         done

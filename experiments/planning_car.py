@@ -9,8 +9,11 @@ from planning.car import SE2CarPlanner, generate_car_env, visualize_car_env
 from planning.car import CAR_SIZE
 
 
-def generate_envs(n_states, visualize=False):
+def generate_envs(n_states, visualize=False, overwrite=False):
     """Generate initial states"""
+    if not overwrite and os.path.exists("data/planning_car_envs.npy"):
+        return
+
     envs = []
     for _ in range(n_states):
         env = generate_car_env()
@@ -53,13 +56,13 @@ def run_planning(belief, algo, terminal_weight, envs, planning_times, n_reps):
 
 if __name__ == "__main__":
     set_seed(42)
-    # generate_envs(20, visualize=False)
+    generate_envs(20, visualize=False)
 
     args = parse_args(
         [
             ("belief", 0, int),
             ("algo", "aorrt", str),
-            ("terminal_weight", 5.0, float),
+            ("terminal_weight", 50.0, float),
             ("n_reps", 1, int),
         ]
     )

@@ -717,12 +717,13 @@ class SE2CarOptimizationObjective(ob.OptimizationObjective):
 def test():
     import pickle
     from experiments.utils import set_seed
+    from experiments.visualize_car import build_car_visualization_xml
     from simulation.car_sim import Sim
 
     set_seed(42)
-    # env = generate_car_env()
-    envs = np.load("data/planning_car_envs.npy", allow_pickle=True)
-    env = envs[2]
+    env = generate_car_env()
+    # envs = np.load("data/planning_car_envs.npy", allow_pickle=True)
+    # env = envs[2]
     visualize_car_env(env, [env["start"]], draw_car_shape=True)
     plt.show()
 
@@ -742,39 +743,12 @@ def test():
         env["start"], env["goals"], env["goal_size"], 0, times
     )
 
-    # Unified cost in belief space
-    for i in range(len(times)):
-        running_cost = 0
-        for j in range(len(states[i]) - 1):
-            running_cost += SE2CarOptimizationObjective.se2_distance(
-                states[i][j][:3],
-                states[i][j + 1][:3],
-                vec_to_cov(states[i][j][3:]),
-                vec_to_cov(states[i][j + 1][3:]),
-            )
-        terminal_cost = SE2CarOptimizationObjective.se2_distance(
-            states[i][-1][:3],
-            env["goals"][0],
-            vec_to_cov(states[i][-1][3:]),
-        )
-        print(f"{times[i]:.2f}: {running_cost:.2f}, {terminal_cost:.2f}")
-        # print(f"{times[i]:.2f}: {costs[i][0]:.2f}, {costs[i][1]:.2f}")
-
-    # Test risk computation
-    for i in range(len(states[-1])):
-        risk = circles_collision_risk(
-            states[-1][i][:3],
-            vec_to_cov(states[-1][i][3:]),
-            planner.car_circles,
-            planner.obstacles_circles,
-        )
-        print(f"State: {i}: {states[-1][i][:3]}: Risk: {risk}")
-
     # Execution
     u = [np.array(controls[-1])]
     t = [np.ones(len(controls[-1]))]
     par_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     xml = open(os.path.join(par_dir, "simulation/car_sim.xml")).read()
+    xml = build_car_visualization_xml(env, pos_ranges=POS_RANGES)
     sim = Sim(xml, n_envs=10, dt=0.01, visualize=True)
     sim.set_car_init_states(states[-1][0])
     sim.reset()
@@ -785,6 +759,35 @@ def test():
     # Visualization
     visualize_car_env(env, states[-1], exec_states[-1], CAR_SIZE, True)
     plt.show()
+
+    # Debugging
+    # # Unified cost in belief space
+    # for i in range(len(times)):
+    #     running_cost = 0
+    #     for j in range(len(states[i]) - 1):
+    #         running_cost += SE2CarOptimizationObjective.se2_distance(
+    #             states[i][j][:3],
+    #             states[i][j + 1][:3],
+    #             vec_to_cov(states[i][j][3:]),
+    #             vec_to_cov(states[i][j + 1][3:]),
+    #         )
+    #     terminal_cost = SE2CarOptimizationObjective.se2_distance(
+    #         states[i][-1][:3],
+    #         env["goals"][0],
+    #         vec_to_cov(states[i][-1][3:]),
+    #     )
+    #     print(f"{times[i]:.2f}: {running_cost:.2f}, {terminal_cost:.2f}")
+    #     print(f"{times[i]:.2f}: {costs[i][0]:.2f}, {costs[i][1]:.2f}")
+
+    # # Test risk computation
+    # for i in range(len(states[-1])):
+    #     risk = circles_collision_risk(
+    #         states[-1][i][:3],
+    #         vec_to_cov(states[-1][i][3:]),
+    #         planner.car_circles,
+    #         planner.obstacles_circles,
+    #     )
+    #     print(f"State: {i}: {states[-1][i][:3]}: Risk: {risk}")
 
 
 if __name__ == "__main__":

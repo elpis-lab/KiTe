@@ -11,8 +11,11 @@ from planning.planning_utils import vec_to_cov
 from planning.push import SE2PushPlanner, generate_push_env, visualize_push_env
 
 
-def generate_envs(n_states, visualize=False):
+def generate_envs(n_states, visualize=False, overwrite=False):
     """Generate initial states"""
+    if not overwrite and os.path.exists("data/planning_push_envs.npy"):
+        return
+
     envs = []
     for _ in range(n_states):
         env = generate_push_env()
@@ -101,16 +104,16 @@ def run_planning(
 
 if __name__ == "__main__":
     set_seed(42)
-    # generate_envs(20, visualize=False)
+    generate_envs(20, visualize=False)
 
     args = parse_args(
         [
             # Model
             ("obj_name", "cracker_box_flipped"),
             ("model_type", "mlp"),
-            ("use_var", 1, int),
             ("n_data", 1000, int),
             # Planning
+            ("belief", 1, int),
             ("algo", "aorrt", str),
             ("active_sampling", 0, int),
             ("terminal_weight", 2.0, float),
@@ -140,10 +143,10 @@ if __name__ == "__main__":
     )
 
     # Save the results
-    belief = "w2" if args.use_var == 1 else "l2"
+    belief = "w2" if args.belief == 1 else "l2"
     active_sampling = "active" if args.active_sampling == 1 else "random"
     name = (
-        f"{args.obj_name}_{args.model_type}_{args.use_var}_{args.n_data}"
+        f"{args.obj_name}_{args.model_type}_{args.belief}_{args.n_data}"
         + f"_{args.algo}_{belief}_{active_sampling}_{args.terminal_weight}"
     )
     os.makedirs("results/planning_push", exist_ok=True)

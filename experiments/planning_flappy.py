@@ -12,8 +12,11 @@ from planning.flappy import (
 )
 
 
-def generate_envs(n_states, visualize=False):
+def generate_envs(n_states, visualize=False, overwrite=False):
     """Generate initial states"""
+    if not overwrite and os.path.exists("data/planning_flappy_envs.npy"):
+        return
+
     envs = []
     for _ in range(n_states):
         env = generate_flappy_env()
@@ -56,7 +59,7 @@ def run_planning(
 
 if __name__ == "__main__":
     set_seed(42)
-    # generate_envs(20, visualize=True)
+    generate_envs(20, visualize=True)
 
     args = parse_args(
         [

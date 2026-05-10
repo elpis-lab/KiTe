@@ -885,8 +885,7 @@ class SE2PushOptimizationObjective(ob.OptimizationObjective):
 def test():
     from geometry.object_model import get_obj_shape
     from experiments.train_push_model import load_model
-
-    # from experiments.run_push_plans import RunPushPlansPool
+    from experiments.run_push_plans import RunPushPlansPool
     from experiments.utils import DataLoader, set_seed, get_names
 
     set_seed(10)
@@ -902,7 +901,7 @@ def test():
     n_data = 1000
     m_id = 0
     # Load object
-    obj_name = "trash_truck"
+    obj_name = "mustard_bottle_flipped"
     model_name, data_name, rep_data_name = get_names(obj_name)
     obj_shape = get_obj_shape(f"assets/{model_name}/textured.obj")
     # Load trained model
@@ -941,17 +940,16 @@ def test():
     for i in range(len(times)):
         print(f"{times[i]:.2f}: {costs[i][0]:.2f}, {costs[i][1]:.2f}")
 
-    # # Execution
-    # exec_path, _, _ = run_plans_pool(
-    #     obj_name,
-    #     [states[-1]],
-    #     [controls[-1]],
-    #     obj_shape,
-    #     env["obstacles"],
-    #     dataset,
-    # )
-    # exec_states = exec_path[-1]
-    exec_states = None
+    # Execution
+    exec_path, _, _ = run_plans_pool(
+        obj_name,
+        [states[-1]],
+        [controls[-1]],
+        obj_shape,
+        env["obstacles"],
+        dataset,
+    )
+    exec_states = exec_path[-1]
 
     # Visualization
     visualize_push_env(env, states[-1], exec_states, obj_shape=obj_shape)

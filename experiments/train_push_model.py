@@ -229,11 +229,11 @@ def main(obj_name, model_type, use_var=1, n_data=1000, seed=42, plot=False):
 if __name__ == "__main__":
     args = parse_args(
         [
-            ("obj_name", "real_trash_truck"),
+            ("obj_name", "mustard_bottle_flipped"),
             ("model_type", "mlp"),
             ("use_var", 1, int),
-            ("n_data", 700, int),
-            ("seed", 41, int),
+            ("n_data", 1000, int),
+            ("seed", 42, int),
         ]
     )
     main(args.obj_name, args.model_type, args.use_var, args.n_data, args.seed)
