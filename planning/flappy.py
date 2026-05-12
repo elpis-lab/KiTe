@@ -535,7 +535,7 @@ def test():
     plt.show()
 
     planner = FlappyPlanner(env["obstacles"], "aorrt", terminal_weight=1.0)
-    times = [0.5, 1.0, 10.0]
+    times = [0.1, 0.5, 10.0]
     states, controls, costs = planner.plan(
         env["start"], env["goal"], env["goal_size"], times
     )

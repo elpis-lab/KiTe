@@ -134,7 +134,7 @@ def visualize_push_env(
             exec_path[:, 0],
             exec_path[:, 1],
             "o-",
-            color="C3",
+            color="C5",
             label="Actual Path",
         )
 
@@ -885,12 +885,20 @@ class SE2PushOptimizationObjective(ob.OptimizationObjective):
 def test():
     from geometry.object_model import get_obj_shape
     from experiments.train_push_model import load_model
-    from experiments.run_push_plans import RunPushPlansPool
     from experiments.utils import DataLoader, set_seed, get_names
+
+    from simulation.push_sim import Sim
+    from experiments.collect_push_data import euler_to_quat, project_se3_pose
+    from experiments.collect_push_data import generate_path_from_params
+    from simulation.grr_ik import IK
+    from simulation.mink_ik import UR10IK
+
+    # TODO
+    # Add obstacle and goal visualization
 
     set_seed(10)
     env = generate_push_env()
-    # envs = np.load("data/planning_push_envs.npy")
+    # envs = np.load("data/planning_push_envs.npy", allow_pickle=True)
     # env = envs[0]
     visualize_push_env(env)
     plt.show()
@@ -941,19 +949,51 @@ def test():
         print(f"{times[i]:.2f}: {costs[i][0]:.2f}, {costs[i][1]:.2f}")
 
     # Execution
-    exec_path, _, _ = run_plans_pool(
-        obj_name,
-        [states[-1]],
-        [controls[-1]],
-        obj_shape,
-        env["obstacles"],
-        dataset,
+    # setup
+    ik = IK("ur10_rod")
+    # ik = UR10IK("assets/ur10_rod_table.xml")
+    xml = open("simulation/push_sim.xml").read()
+    xml = xml.replace("object_name", obj_name)
+    sim = Sim(
+        xml,
+        n_envs=20,
+        robot_joint_dof=6,
+        robot_ee_dof=0,
+        dt=0.02,
+        visualize=True,
+        real_time_vis=False,
     )
-    exec_states = exec_path[-1]
+    n_envs, dt = sim.get_sim_info()
+    curr_state = states[-1][0][:3].copy()
+    mj_state = [
+        *curr_state[:2],
+        obj_shape[2] / 2,
+        *euler_to_quat((0, 0, curr_state[2])),
+    ]
+
+    # execute
+    sim.set_obj_init_poses(mj_state, 0)
+    sim.reset()
+    input("Start execution")
+    exec_states = [curr_state]
+    for control in controls[0]:
+        projected_mj_state = mj_state.copy()
+        se2_pose = project_se3_pose(mj_state, axis=[0, 1, 0])
+        projected_mj_state[3:7] = euler_to_quat((0, 0, se2_pose[2]))
+
+        t_paths, ws_paths = generate_path_from_params(
+            [projected_mj_state], obj_shape, [control]
+        )
+        traj = ik.ws_path_to_traj(t_paths[0], ws_paths[0])
+        waypoints = traj.to_step_waypoints(dt)
+        sim.execute_waypoints(waypoints[:, None, :], 3.0)
+        mj_state = sim.get_obj_pose()[0]
+        exec_states.append(project_se3_pose(mj_state, axis=[0, 1, 0]))
 
     # Visualization
     visualize_push_env(env, states[-1], exec_states, obj_shape=obj_shape)
     plt.show()
+    sim.close()
 
 
 ########## Test ##########

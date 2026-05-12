@@ -768,6 +768,7 @@ def test():
     sim.set_car_init_states(states[-1][0])
     sim.reset()
     # execute with rear-axis frame
+    input("Start execution")
     exec_states, exec_inter_states = sim.execute_controls(
         u, t, wait_time=0.5, return_intermediate=True
     )
@@ -775,6 +776,7 @@ def test():
     # Visualization
     visualize_car_env(env, states[-1], exec_states[-1], draw_car_shape=True)
     plt.show()
+    sim.close()
 
     # Debugging
     # # Unified cost in belief space
