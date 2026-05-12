@@ -78,24 +78,24 @@ pip install -r requirements_robot.txt
 #### Flappy Bird
 
 <p align="center">
-    <img src="doc/flappy.gif" width="600"/>
+    <img src="doc/flappy.png" width="480"/>
 </p>
 
 Plan and visualize for a single instance:
 
-```
+```bash
 python planning/flappy.py
 ```
 
 Run with different planning methods and save results:
 
-```
+```bash
 python experiments/planning_flappy.py <planner> <terminal_weight> <num_reps>
 ```
 
 This will run the planning <num_reps> times for the randomly generated 20 planning problems, using the assigned planner with given terminal weight (0 means no terminal cost). Note that only KiTe (i.e. AO-RRT) supports theoretically valid terminal cost, while SST doesn't. For example:
 
-```
+```bash
 python experiments/planning_flappy.py aorrt 1.0 1
 ```
 
@@ -107,19 +107,19 @@ python experiments/planning_flappy.py aorrt 1.0 1
 
 Plan and visualize for a single instance:
 
-```
+```bash
 python planning/car.py
 ```
 
 Run with different planning methods and save results:
 
-```
+```bash
 python experiments/planning_car.py <is_belief_space> <planner> <terminal_weight> <num_reps>
 ```
 
 This will run the planning <num_reps> times for the randomly generated 20 planning problems, using the assigned planner with given terminal weight (0 means no terminal cost), and the planning happens in belief space or regular space. Note that only KiTe (i.e. AO-RRT) supports theoretically valid terminal cost, while SST doesn't. For example:
 
-```
+```bash
 python experiments/planning_car.py 1 aorrt 50.0 1
 ```
 
@@ -135,25 +135,25 @@ To plan to push an object, one first needs to learn the object's dynamics and un
 
 To collect data:
 
-```
+```bash
 python experiments/collect_push_data.py <obj_name>
 ```
 
 For example:
 
-```
+```bash
 python experiments/collect_push_data.py mustard_bottle_flipped
 ```
 
 To train a model:
 
-```
+```bash
 python experiments/train_push_model.py <obj_name> <model_type> <use_var> <num_training_data> <seed>
 ```
 
 This selects an object to train with a type of model (currently only supports MLP), using MSE loss (mean prediction only) or NLL loss (with variance), and <num_training_data> interaction data. For example:
 
-```
+```bash
 python experiments/collect_push_data.py mustard_bottle_flipped mlp 1 1000 42
 ```
 
@@ -165,18 +165,18 @@ python experiments/collect_push_data.py mustard_bottle_flipped mlp 1 1000 42
 
 Plan and visualize for a single instance:
 
-```
+```bash
 python planning/push.py
 ```
 
 Run with different planning methods and save results:
 
-```
+```bash
 python experiments/planning_push.py <obj_name> <model_type> <num_training_data> <is_belief_space> <planner> <active_sampling> <terminal_weight> <num_reps>
 ```
 
 This first selects which object used to plan with a type of model (currently only supports MLP) trained with <num_training_data> data. Then it will run the planning <num_reps> times for the randomly generated 20 planning problems, using the assigned planner with given terminal weight (0 means no terminal cost), and the planning happens in belief space or regular space. <active_sampling> determines wheather to use active sampling with model epistemic uncertainty (AKA [Active Planning](https://arxiv.org/abs/2506.04646)). Note that only KiTe (i.e. AO-RRT) supports theoretically valid terminal cost, while SST doesn't. For example:
 
-```
+```bash
 python experiments/planning_push.py mustard_bottle_flipped 1000 1 aorrt 0 20.0 1
 ```
