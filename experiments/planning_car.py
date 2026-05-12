@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from experiments.utils import set_seed, parse_args
 from planning.car import SE2CarPlanner, generate_car_env, visualize_car_env
-from planning.car import CAR_SIZE
+from planning.car import CAR_SIZE, CAR_WHEELBASE
 
 
 def generate_envs(n_states, visualize=False, overwrite=False):
@@ -39,7 +39,12 @@ def run_planning(belief, algo, terminal_weight, envs, planning_times, n_reps):
             print(f"\nPlanning: {rep + 1}th repeat, {prob + 1}th problem")
 
             planner = SE2CarPlanner(
-                env["obstacles"], CAR_SIZE, belief, algo, terminal_weight
+                env["obstacles"],
+                CAR_SIZE,
+                CAR_WHEELBASE / 2,
+                belief,
+                algo,
+                terminal_weight,
             )
             plan_states, plan_controls, plan_costs = planner.plan(
                 env["start"], env["goals"], env["goal_size"], 0, planning_times

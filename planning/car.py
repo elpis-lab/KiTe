@@ -64,9 +64,10 @@ def generate_car_env(obstacles=OBSTACLES, safe_start_range=SAFE_RANGE):
             break
 
     # Fixed Two Goal Regions (Two parking spots)
+    rear_offset = CAR_WHEELBASE / 2
     goals_center = np.zeros((2, 3))
     goals_center[:, 0] = 3.75 * CAR_SIZE[1]
-    goals_center[:, 1] = np.array([5.25, 2.25]) * CAR_SIZE[0]
+    goals_center[:, 1] = np.array([5.25, 2.25]) * CAR_SIZE[0] - rear_offset
     goals_center[:, 2] = 1.5708
     goal_size = 0.1
     return {
@@ -83,6 +84,7 @@ def visualize_car_env(
     path=None,
     exec_path=None,
     car_shape=CAR_SIZE,
+    rear_offset=CAR_WHEELBASE / 2,
     draw_car_shape=False,
     title="Object Push Environment",
 ):
@@ -148,11 +150,15 @@ def visualize_car_env(
         if path is not None:
             for state in path:
                 x, y, yaw = state[:3]
+                x += rear_offset * np.cos(yaw)
+                y += rear_offset * np.sin(yaw)
                 draw_rect(ax, x, y, w, h, yaw, "C0", alpha=0.1)
 
         if exec_path is not None:
             for state in exec_path:
                 x, y, yaw = state[:3]
+                x += rear_offset * np.cos(yaw)
+                y += rear_offset * np.sin(yaw)
                 draw_rect(ax, x, y, w, h, yaw, "C5", alpha=0.1)
 
     # Start
@@ -180,6 +186,7 @@ class SE2CarPlanner:
         self,
         obstacles,
         car_shape=CAR_SIZE,
+        rear_offset=CAR_WHEELBASE / 2,
         belief=True,  # use Wasserstein distance
         algo="aorrt",  # planner algorithm
         terminal_weight=2.0,  # terminal weight (only for aorrt)
@@ -195,7 +202,9 @@ class SE2CarPlanner:
 
         # For collision checking
         self.car_shape = car_shape
-        self.car_circles = approx_rect_to_circles((0, 0, *car_shape), -0.1)
+        self.car_circles = approx_rect_to_circles(
+            (rear_offset, 0, *car_shape), -0.1
+        )
         self.obstacles = np.asarray(obstacles)
         self.obstacles_circles = self.approx_obstacles(obstacles, -0.16)
 
@@ -205,7 +214,7 @@ class SE2CarPlanner:
         #     draw_circle(ax, circle[0], circle[1], circle[2], "r", label="Car")
         # for circle in self.obstacles_circles:
         #     draw_circle(ax, circle[0], circle[1], circle[2])
-        # draw_rect(ax, 0, 0, car_shape[0], car_shape[1])
+        # draw_rect(ax, rear_offset, 0, car_shape[0], car_shape[1])
         # for obstacle in obstacles:
         #     draw_rect(ax, obstacle[0], obstacle[1], obstacle[2], obstacle[3])
         # ax.set_aspect("equal", adjustable="box")
@@ -715,12 +724,14 @@ class SE2CarOptimizationObjective(ob.OptimizationObjective):
 
 
 def test():
-    import pickle
     from experiments.utils import set_seed
     from experiments.visualize_car import build_car_visualization_xml
     from simulation.car_sim import Sim
 
-    set_seed(42)
+    # TODO currently planning is in the rear-axis frame
+    # Maybe it would be more intuitive to plan in the center of mass frame?
+
+    set_seed(10)
     env = generate_car_env()
     # envs = np.load("data/planning_car_envs.npy", allow_pickle=True)
     # env = envs[2]
@@ -733,6 +744,7 @@ def test():
     planner = SE2CarPlanner(
         env["obstacles"],
         CAR_SIZE,
+        CAR_WHEELBASE / 2,
         belief=belief,
         algo=algo,
         terminal_weight=50.0,
@@ -748,16 +760,20 @@ def test():
     t = [np.ones(len(controls[-1]))]
     par_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     xml = open(os.path.join(par_dir, "simulation/car_sim.xml")).read()
-    xml = build_car_visualization_xml(env, pos_ranges=POS_RANGES)
+    # adjusted the goal simply for more intuitive visualization
+    adjusted_env = env.copy()
+    adjusted_env["goals"] = env["goals"] + np.array([0, CAR_WHEELBASE / 2, 0])
+    xml = build_car_visualization_xml(adjusted_env, pos_ranges=POS_RANGES)
     sim = Sim(xml, n_envs=10, dt=0.01, visualize=True)
     sim.set_car_init_states(states[-1][0])
     sim.reset()
+    # execute with rear-axis frame
     exec_states, exec_inter_states = sim.execute_controls(
         u, t, wait_time=0.5, return_intermediate=True
     )
 
     # Visualization
-    visualize_car_env(env, states[-1], exec_states[-1], CAR_SIZE, True)
+    visualize_car_env(env, states[-1], exec_states[-1], draw_car_shape=True)
     plt.show()
 
     # Debugging

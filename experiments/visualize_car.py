@@ -11,7 +11,7 @@ from scipy.interpolate import splprep, splev
 import matplotlib as mpl
 from matplotlib import colors as mcolors
 
-from planning.car import POS_RANGES, generate_car_env, visualize_car_env
+from planning.car import POS_RANGES, CAR_WHEELBASE, generate_car_env
 from planning.planning_utils import vec_to_cov
 from simulation.car_sim import Sim
 
@@ -331,7 +331,6 @@ def workspace_worldbody_overlay(
     obstacles = np.asarray(env.get("obstacles", []), dtype=float)
     goals = np.asarray(env.get("goals", []), dtype=float)
     goal_size = float(env.get("goal_size", 0.075))
-    # goal_size = 0.075
 
     lines = []
     lines.append("  <worldbody>")
@@ -501,11 +500,6 @@ def visualize_car_env_mujoco(
 
 
 if __name__ == "__main__":
-    from planning.car import SE2CarPlanner, CAR_SIZE
-    from experiments.utils import set_seed
-
-    set_seed(42)
-
     # Load environment
     env_i = 9
     envs = np.load("data/planning_car_envs.npy", allow_pickle=True)
@@ -527,6 +521,18 @@ if __name__ == "__main__":
     kite_path = kite_path[:5] + kite_path[7:10] + kite_path[11:]
     gbt_path = gbt_path[2, env_i, -1]
 
+    # adjusted the path for more intuitive visualization (center of mass frame)
+    adjusted_kite_path = kite_path.copy()
+    adjusted_kite_path[:, 0] += CAR_WHEELBASE / 2 * np.cos(kite_path[:, 2])
+    adjusted_kite_path[:, 1] += CAR_WHEELBASE / 2 * np.sin(kite_path[:, 2])
+    adjusted_gbt_path = gbt_path.copy()
+    adjusted_gbt_path[:, 0] += CAR_WHEELBASE / 2 * np.cos(gbt_path[:, 2])
+    adjusted_gbt_path[:, 1] += CAR_WHEELBASE / 2 * np.sin(gbt_path[:, 2])
+    # adjusted the goal simply for more intuitive visualization
+    adjusted_env = env.copy()
+    adjusted_env["goals"] = env["goals"] + np.array([0, CAR_WHEELBASE / 2, 0])
     visualize_car_env_mujoco(
-        env=env, trajectory_1=kite_path, trajectory_2=gbt_path
+        env=adjusted_env,
+        trajectory_1=adjusted_kite_path,
+        trajectory_2=adjusted_gbt_path,
     )
