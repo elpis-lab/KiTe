@@ -169,9 +169,7 @@ class Sim:
 
     def get_obj_pose(self, obj_idx=0, env_idx=None):
         """Return object information"""
-        _, env_idx = self._preprocess_env_idx(
-            np.zeros((self.n_envs, 1)), env_idx
-        )
+        env_idx = self._preprocess_env_idx(env_idx)
         return np.stack(self.mj_datas_qpos[env_idx])[:, self.obj_idxs[obj_idx]]
 
     ########## Robot-related functions ##########
@@ -185,16 +183,12 @@ class Sim:
 
     def get_robot_joints(self, env_idx=None):
         """Get the robot joint positions"""
-        _, env_idx = self._preprocess_env_idx(
-            np.zeros((self.n_envs, 1)), env_idx
-        )
+        env_idx = self._preprocess_env_idx(env_idx)
         return np.stack(self.mj_datas_qpos[env_idx])[:, self.robot_joint_idx]
 
     def get_robot_ee(self, env_idx=None):
         """Get the robot end-effector positions"""
-        _, env_idx = self._preprocess_env_idx(
-            np.zeros((self.n_envs, 1)), env_idx
-        )
+        env_idx = self._preprocess_env_idx(env_idx)
         return np.stack(self.mj_datas_qpos[env_idx])[:, self.robot_ee_idx]
 
     def move_ee(self, ee, env_idx=None, wait_time=0.0):

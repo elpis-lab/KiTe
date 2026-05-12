@@ -73,6 +73,8 @@ def generate_path_from_params(
 ):
     """Generate a workspace path from the push parameters"""
     # Unpack parameters
+    push_params = np.asarray(push_params)
+    obj_states = np.asarray(obj_states)
     assert push_params.ndim == 2 and push_params.shape[1] == 3
     assert obj_states.shape[0] == push_params.shape[0]
     n_data = push_params.shape[0]

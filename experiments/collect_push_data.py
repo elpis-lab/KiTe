@@ -15,7 +15,7 @@ from geometry.random_push import (
     generate_path_from_params,
 )
 from geometry.object_model import get_obj_shape
-from utils import parse_args, set_seed
+from experiments.utils import parse_args, set_seed
 from lie_group.lie_se2 import se2_stats
 
 from simulation.push_sim import Sim
