@@ -2,8 +2,6 @@
 
 Implementation of paper *Terminal Matters: Kinodynamic Planning with a Terminal Cost and Learned Uncertainty in Belief State-Cost Space*. This paper proposes sampling-based **Ki**nodynamic planning with a **Te**rminal cost, termed **KiTe**, and highlights the importance of terminal-state optimization in both deterministic planning and belief-space planning.
 
-[Paper TBA] [[Pre-print](https://arxiv.org/abs/2605.09046)] [[Presentation Video](youtu.be/XgUaRy2WUow)]
-
 <p align="center">
     <img src="doc/intro.jpg" width="600"/>
 </p>
@@ -27,11 +25,9 @@ Implementation of paper *Terminal Matters: Kinodynamic Planning with a Terminal 
 
 This repository is developed with python 3.10.12 in Ubuntu 22.04.
 
-#### Clone this project with submodule
+#### Download this project
 
-```bash
-git clone --recurse-submodules git@github.com:elpis-lab/KiTe.git
-```
+Download this project
 
 #### Major python dependencies
 
@@ -41,11 +37,7 @@ pip install -r requirements.txt
 
 #### OMPL
 
-This projects uses a new proposed planner KiTe (AO-RRT with a terminal cost). Also, some of the plannings are done in belief space. One needs to build the customized OMPL for KiTe from source. Clone the [KiTe-OMPL](https://github.com/elpis-lab/KiTe-OMPL) repository (modified based on [OMPL](https://github.com/ompl/ompl) 2.0.0): 
-
-```bash
-git clone git@github.com:elpis-lab/KiTe-OMPL.git
-```
+This projects uses a new proposed planner KiTe (AO-RRT with a terminal cost). Also, some of the plannings are done in belief space. One needs to build the customized OMPL for KiTe from source. Download from the [KiTe-OMPL](https://anonymous.4open.science/r/KiTe-OMPL-CB12) repository (modified based on [OMPL](https://github.com/ompl/ompl) 2.0.0): 
 
 Build OMPL from source:
 

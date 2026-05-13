@@ -890,7 +890,8 @@ def test():
     from simulation.push_sim import Sim
     from experiments.collect_push_data import euler_to_quat, project_se3_pose
     from experiments.collect_push_data import generate_path_from_params
-    from simulation.grr_ik import IK
+
+    # from simulation.grr_ik import IK
     from simulation.mink_ik import UR10IK
 
     # TODO
@@ -950,8 +951,8 @@ def test():
 
     # Execution
     # setup
-    ik = IK("ur10_rod")
-    # ik = UR10IK("assets/ur10_rod_table.xml")
+    # ik = IK("ur10_rod")
+    ik = UR10IK("assets/ur10_rod_table.xml")
     xml = open("simulation/push_sim.xml").read()
     xml = xml.replace("object_name", obj_name)
     sim = Sim(
