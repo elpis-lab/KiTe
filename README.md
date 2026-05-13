@@ -2,7 +2,7 @@
 
 Implementation of paper *Terminal Matters: Kinodynamic Planning with a Terminal Cost and Learned Uncertainty in Belief State-Cost Space*. This paper proposes sampling-based **Ki**nodynamic planning with a **Te**rminal cost, termed **KiTe**, and highlights the importance of terminal-state optimization in both deterministic planning and belief-space planning.
 
-[Paper TBA] [Pre-print TBA] [Presentation Video TBA]
+[Paper TBA] [[Pre-print](https://arxiv.org/abs/2605.09046)] [[Presentation Video](youtu.be/XgUaRy2WUow)]
 
 <p align="center">
     <img src="doc/intro.jpg" width="600"/>
